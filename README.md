@@ -67,9 +67,7 @@ The MaintenanceWindow CRD's spec contains:
 - `triggers` (list): A list of CEL expressions that need to ALL apply to mark the node under evaluation as triggered for maintenance
   Triggers can be based on diverse node information: labels, annotations, name, status, and conditions.
 - `concurrency` (int): the maximum number of distinct nodes admitted for this maintenance window.
-  A node already counted in another maintenance window will already be counted.
-  In other words, the maximum nodes for a single maintenance window can already be _exceeded_ at maintenance startTime.
-  See concurrency conflicts below;
+  A node already counted in another maintenance window might be reused for two maintenance at the same time (depends on their triggers). See concurrency conflicts below;
 - `extraConditionType` (optional, string). Any eventual extra condition type to set on the node when it goes into / leaves maintenance.
   This can be used for legacy reasons or to track multiple concurrent maintenance that should not overlap their node actions.
 
@@ -145,24 +143,30 @@ This map is regenerated every time there is a change in `currentMaintenanceWindo
 
 #### Reconciliation process
 
-We reconcile each MaintenanceWindow separately.
+At container start, the system will read all the k8s nodes and maintenance windows, in order to establish establish a list of nodes who are currently in maintenance (restore from crash).
+This should be blocking all reconciles until the memory is completed refreshed.
+
+We then reconcile each MaintenanceWindow separately.
 
 The queuing (reconciliation of the maintenance windows) should happen:
 - On timer, as it might change based on schedule
 - On a periodic basis, to guarantee the state is still accurate
 - At each node spec change / relevant status change / Condition transition
 
-First step is defining the `status.state` based on schedule.
-Any Closed/Invalid state deletes the `currentMaintenanceWindows[name]` and triggers an update of `globalNodesUnderMaintenance` (setting the nodes as not under maintenance).
-Skip to fifth step (update k8s api) and then do the 6th step (node conditions cleanup)
-
-Second step: we query kubernetes API and fetch all the nodes matching the nodeSelector.
+First step: we query kubernetes API and fetch all the nodes matching the nodeSelector.
 We create an in-memory map `currentMaintenanceWindows[name]`.
 At this point copy the list of nodes queried from k8s api (to keep it pristine, see why at the end of this section), as the list of nodes to process will be mutated in this reconcile loop.
+Known issue: If someone changes the nodeselector to a subset of nodes, then previously selected nodes do not updates.
 
 Any new node is added as `currentMaintenanceWindows[name][nodename]=Unknown`.
 Any node NOT MATCHING ANYMORE will be removed from currentMaintenanceWindows[name].
 Again, if any change happen, regenerate the map globalNodesUnderMaintenance.
+
+Second step: reading the schedule.
+If it is invalid, mark the `status.state` as `Invalid`.
+If it is valid but in the past, with no future occurence, defined `status.state` as `Closed`.
+To be worth noting: Any Closed/Invalid state deletes the `currentMaintenanceWindows[name]` (which triggers an update of `globalNodesUnderMaintenance` ,setting the nodes as not under maintenance).
+Skip to fifth step (update k8s api) and then do the 6th step (node conditions cleanup)
 
 Third step: we iterate to check each node in a recent order.
 For that, we sort the list of all nodes by the node's condition `MaintenanceInProgress`'s last Transition time if it exists.
@@ -172,7 +176,7 @@ A) Matching trigger
 We set `currentMaintenanceWindows[name][nodename]=UnmetTrigger` for the nodes who do not match the trigger, regardless of whether the node is already active in another maintenance Window or whether it was previously met.
 Again, any update should refresh globalNodesUnderMaintenance.
 Delete the node from the list of nodes to process.
-Skip the rest of the loop for this node.
+Go to step 5 and 6.
 
 I repeat: Do not set anything else if the trigger is met. This will be done later.
 
@@ -221,10 +225,9 @@ We now can reuse the pristine list of nodes, and compare the nodes's following C
 - condition type stored in the mw.`extraConditionType` if any.
 
 Prepare a write if `pristinelist[nodename].status.Conditions.MaintenanceInProgress.Value` or `pristinelist[nodename].status.Condition.<extraconditiontype>.Value` differs from globalNodesUnderMaintenance
-(Also check if the reason need updating!).
+(Also check if the reason need updating!). No update happens on Unknown Value.
 
-Post it to k8s api, which will cause a reconcile of all MW, which should double check the current state.
-As no other writes should be happening, the write will stop there.
+Post it to k8s api, which may cause a reconcile of the MWs, but should be smartly filtered with the correct predicates.
 
 ### Handling MaintenanceWindow conflicts
 
@@ -379,8 +382,10 @@ This causes requeuing on kumaco, but it is fine: we most do events...
 
 ## Metrics
 
-Metrics report the same decisions as reconciliation; node conditions, not metrics, are
-the record used to rebuild slot occupancy after a restart. Each controller exports:
+Metrics report the same decisions as reconciliation;
+the two maps are the record used to rebuild slot occupancy after a restart.
+
+Each controller exports, based on those maps:
 
 - `kumaco_maintenance_window_active{window}`: gauge, 1 while that window's schedule is
   active, 0 otherwise.
@@ -388,6 +393,15 @@ the record used to rebuild slot occupancy after a restart. Each controller expor
 - `kumaco_node_slot_occupied{node}`: gauge for each managed node, 1 if
   `MaintenanceInProgress` is `True`, 0 otherwise.
   Reflects the content of `globalNodesUnderMaintenance`
+
+## Gochas
+
+A trigger depending on the condition this window changes can oscillate.
+For example, requiring MaintenanceInProgress to be absent causes it to alternate between True and False.
+
+The user should not do that.
+We do not validate it. If the administrator is afraid of that, it can write an admission rule preventing
+the use of MaintenanceInProgress or preventing the use of the extraConditionType in the trigger.
 
 ## Debugging with kumaco events
 
