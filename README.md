@@ -68,8 +68,10 @@ The MaintenanceWindow CRD's spec contains:
   Triggers can be based on diverse node information: labels, annotations, name, status, and conditions.
 - `concurrency` (int): the maximum number of distinct nodes admitted for this maintenance window.
   A node already counted in another maintenance window might be reused for two maintenance at the same time (depends on their triggers). See concurrency conflicts below;
-- `extraConditionType` (optional, string). Any eventual extra condition type to set on the node when it goes into / leaves maintenance.
-  This can be used for legacy reasons or to track multiple concurrent maintenance that should not overlap their node actions.
+- `extraConditionType` (optional, string): an extra node condition owned by this window,
+  set when its node goes into or leaves maintenance. This can distinguish overlapping
+  maintenance. Windows that can select the same node need different extra condition
+  types for separate results; the type cannot be `MaintenanceInProgress`.
 
 Daylight saving time follows the configured timezone without special handling: if a
 scheduled local time does not exist when clocks move forward, that occurrence does not
@@ -87,9 +89,36 @@ The MaintenanceWindow CRD's status contains:
   - `Scheduled`: no occurrence is active, but a future occurrence exists.
   - `Closed`: no occurrence is active and no future occurrence exists (including a one-off
     window whose duration has elapsed).
-  - `Invalid`: the input of the CRD is incorrect.
-- `nodesUnderMaintenance` (map): This is map containing all the nodes matching the nodeSelector, and their combined _Trigger_ and _concurrency_ state.
-  In other words: `nodesUnderMaintenance` has keys equal to node names, and value a string: UnderMaintenance/UnmetTrigger/MaxConcurrencyReached/Unknown
+  - `Invalid`: the input of the CRD is incorrect, or the window selects more nodes than the configured limit.
+- `nodeStates` (map): each node's decision for this window, including nodes outside its schedule.
+  Keys are node names.
+  values are:
+  `UnderMaintenance`
+  `UnmetTrigger`
+  `MaxConcurrencyReached`
+  `Unknown` (means evaluation has not completed. It never authorizes maintenance)
+  `SelectorMismatch`
+  `PastMaintenanceWindow`
+  `FutureMaintenanceWindow`
+  `InvalidMaintenanceWindow`
+
+### What does it reconcile, and when?
+
+The controller watches:
+
+1. cluster-wide custom resources `MaintenanceWindow` (matching a certain label if configured for it, for example in the case of multiple kumaco deployments);
+2. node changes;
+3. time-based requeues.
+
+Queue reconciliation happens on scheduled boundaries, periodically, when a MaintenanceWindow
+is created, changed, or deleted, or even if a relevant node input changes.
+
+Node changes may affect selectors or CEL triggers.
+Therefore:
+
+1. All spec changes are therefore relevant.
+2. From the metadata perspective, only labels and annotations are relevant.
+3. From the status perspective, only Conditions are considered relevant. (We consider MaintenanceInProgress irrelevant though).
 
 ### What does it look like on my node?
 
@@ -98,30 +127,23 @@ Most of the time:
 ```
 type: `MaintenanceInProgress`
 status: False
-reason: KumaNoMaintenanceWindow
-message: "No active maintenance window selecting this node exists"
-lastTransitionTime: <date and time of the first poll where no triggers match>
+reason: KumaNotFound
+message: "No maintenance window currently authorizes this node"
+lastTransitionTime: <time the condition became False>
 lastHeartbeatTime: <recent time showing controller liveness>
 ```
 
-If safeguarded:
-```
-type: `MaintenanceInProgress`
-status: False
-reason: KumaTriggersMismatch
-message: "No active maintenance window selecting this node has all its triggers matching"
-lastTransitionTime: <date and time of the first poll where no triggers match>
-lastHeartbeatTime: <recent time showing controller liveness>
-```
+The precise reason a window did not authorize this node is in that window's
+`status.nodeStates`, not in this global condition.
 
 During a maintenance:
 
 ```
 type: `MaintenanceInProgress`
 status: True
-reason: KumaEnteredMaintenanceWindow
+reason: KumaInProgress
 message: "An active maintenance window selecting this node exists"
-lastTransitionTime: <date and time of the first poll where no triggers match>
+lastTransitionTime: <time the condition became True>
 lastHeartbeatTime: <recent time showing controller liveness>
 ```
 
@@ -133,101 +155,137 @@ We mostly rely on two global mutated maps with locks:
 - currentMaintenanceWindows
 - globalNodesUnderMaintenance
 
-`currentMaintenanceWindows` is a global map, with maintenance window names as keys (read from the CRD's metadata.name), and as values a map containing NodeMaintenanceInformation (Key = node name, Value = enum UnderMaintenance/UnmetTrigger/MaxConcurrencyReached/Unknown).
-In other words: `currentMaintenanceWindows[mw name][node name] gives you the authoritative information about whether the node is UnderMaintenance, has Unmet Trigger, cannot be added to maintenance due to maximum concurrency reached FOR A DETERMINED MAINTENANCE.
+`currentMaintenanceWindows` maps each window name to a state for every managed node,
+using the same values as `status.nodeStates`.
+This per-window map is the source for each window's extra condition and status.
 
-`globalNodesUnderMaintenance` is a global map, it contains as keys the nodenames, and as value boolean (True for MaintenanceInProgress, False otherwise).
-It is meant as efficient tool to query information ABOUT WHETHER A NODE IS UNDER ANY MAINTENANCE (regardless of the maintenance window).
-This is a tool for querying, not writing, information.
-This map is regenerated every time there is a change in `currentMaintenanceWindows`.
+`globalNodesUnderMaintenance` maps every managed node to `True` if any window has
+`UnderMaintenance` for it, or `False` otherwise.
+It is the only source for the shared `MaintenanceInProgress` condition.
+It is built from the `currentMaintenanceWindows` map (the per-window maps).
+The recommended pattern is to rebuild the `globalNodesUnderMaintenance` at
+each change of `currentMaintenanceWindows` map.
+Do not update it manually.
 
 #### Reconciliation process
 
-At container start, the system will read all the k8s nodes and maintenance windows, in order to establish establish a list of nodes who are currently in maintenance (restore from crash).
-This should be blocking all reconciles until the memory is completed refreshed.
+Reminder: In this controller, all the nodes absent from `globalNodesUnderMaintenance`
+are considered as "in need of garbage collection".
 
-We then reconcile each MaintenanceWindow separately.
+This means we need to build a world view at container start, to prevent
+the first reconcile to garbage collect all the nodes not matched by the "currently
+reconciling" maintenance window.
 
-The queuing (reconciliation of the maintenance windows) should happen:
-- On timer, as it might change based on schedule
-- On a periodic basis, to guarantee the state is still accurate
-- At each node spec change / relevant status change / Condition transition
+We block/queue the reconciles at this point.
+The step to rebuild the world view is to read all MaintenanceWindows
+and run the usual reconcile loop _without k8s writes_.
+For that, we need to load/evaluate all existing mw (with the same functions as usual
+reconcile).
+To speed up things, we do not rebuild the `globalNodesUnderMaintenance` yet: it will
+be quickly outdated. Instead, we do it when all the mw are read
+(=when `currentMaintenanceWindows` is up to date).
 
-First step: we query kubernetes API and fetch all the nodes matching the nodeSelector.
-We create an in-memory map `currentMaintenanceWindows[name]`.
-At this point copy the list of nodes queried from k8s api (to keep it pristine, see why at the end of this section), as the list of nodes to process will be mutated in this reconcile loop.
-Known issue: If someone changes the nodeselector to a subset of nodes, then previously selected nodes do not updates.
+After this point, both `currentMaintenanceWindow` and `globalNodesUnderMaintenance`
+are considered "fresh" (though they might be already outdated), but the nodes
+have not been modified from the information we have:
+They need garbage collecting before the first reconcile! (as they might have
+outdated `MaintenanceInProgress`).
 
-Any new node is added as `currentMaintenanceWindows[name][nodename]=Unknown`.
-Any node NOT MATCHING ANYMORE will be removed from currentMaintenanceWindows[name].
-Again, if any change happen, regenerate the map globalNodesUnderMaintenance.
+We therefore need one last step for startup: Update the nodes
+`MaintenanceInProgress` condition type. For all nodes, we use the
+`globalNodesUnderMaintenance[node]` as the boolean to flip the
+reason and status of the Condition. In case a transition happens, update the
+time of the transition too. (See section "What does it look like on my node?").
 
-Second step: reading the schedule.
-If it is invalid, mark the `status.state` as `Invalid`.
-If it is valid but in the past, with no future occurence, defined `status.state` as `Closed`.
-To be worth noting: Any Closed/Invalid state deletes the `currentMaintenanceWindows[name]` (which triggers an update of `globalNodesUnderMaintenance` ,setting the nodes as not under maintenance).
-Skip to fifth step (update k8s api) and then do the 6th step (node conditions cleanup)
+After this startup sequence, we can start reconciling
+each MaintenanceWindow separately in the controller.
 
-Third step: we iterate to check each node in a recent order.
-For that, we sort the list of all nodes by the node's condition `MaintenanceInProgress`'s last Transition time if it exists.
+Case 1: Deletion of a maintenance window.
+When a maintenance window is observed as deleted:
+1. extract all node names from the mw;
+2. delete that mw window's map in `currentMaintenanceWindow` and rebuild the global map as usual
+3. loop over the extracted node names. For any node which now is transitioning state
+   (based on a check in `globalNodesUnderMaintenance`), update the k8s Condition
+   `MaintenanceInProgress`.
+
+Case 2: Every other maintenance window change.
+Run a k8s request, get all nodes. I will call this copied list "pristineListOfNodes".
+First step - Select nodes:
+- Read mw.nodeSelector, use it to run a k8s request (or alternatively, copy the pristineListOfNodes and filter on that list): get all nodes matching the selector. I will call the list of nodes "nodesToProcess" further down.
+- If `mw.extraConditionType` has changed, record all nodes which need cleaning + the condition to remove
+Any unknown node (=not present in globalNodesUnderMaintenance) needs adding as `currentMaintenanceWindows[mw.name][nodename]=Unknown`.
+Then, any node not matching should be updated to `currentMaintenanceWindow[mw.name][nodename]=SelectorMismatch` 
+Regenerate the globalNodesUnderMaintenance map if a change happened.
+If # of nodes matching exceeds limits, return mw.status.state Invalid and do not process further. Emit an event.
+Only go over step 2-3-4 if NOT SelectorMismatch.
+
+Second step - Evaluate schedule:
+- An occurrence is `InProgress` if now is between its start and start plus `duration` (regardless of whether there is a future start)
+- An occurrence is `Scheduled` if it has a next start > now 
+- An occurrence is `Closed` if the "next" or only start < now
+- An occurrence is `Invalid` if we cannot parse the schedule.
+For the `Scheduled`, `Closed`, `Invalid` case: Read/Update `currentMaintenanceWindow` of all matching nodes (found in step 1) to respectively `FutureMaintenanceWindow`, `PastMaintenanceWindow`, and `InvalidMaintenanceWindow`.
+In case of change, regenerate the `globalNodesUnderMaintenance` map. Only go over steps 3-4 if `InProgress`.
+ 
+Third step - Iterate over each node 
+Before next substeps, we sort the list of all "nodesToProcess" by the node's condition `MaintenanceInProgress`'s last Transition time if it exists.
 If not, by node age. More recent first.
 
-A) Matching trigger
-We set `currentMaintenanceWindows[name][nodename]=UnmetTrigger` for the nodes who do not match the trigger, regardless of whether the node is already active in another maintenance Window or whether it was previously met.
-Again, any update should refresh globalNodesUnderMaintenance.
-Delete the node from the list of nodes to process.
-Go to step 5 and 6.
+Substep 3.1 - Set node triggers:
+If current node is not matching ALL the CEL mw.triggers at the same time, Set `currentMaintenanceWindows[mw.name][nodename]=UnmetTrigger`.
+Remove the node from the `nodesToProcess` list.
+Continue to next node at step 3.1.
+In case of change, regenerate the `globalNodesUnderMaintenance` map.
 
-I repeat: Do not set anything else if the trigger is met. This will be done later.
-
-B) Combining maintenance windows
+Substep 3.2 - Combined mw checking.
+The current node, selected by the nodeSelector + matching ALL CEL mw.triggers + `InProgress`, might have _another maintenance window active_ for it.
 If a node is _already in another maintenance window_ and the user has decided to _not exclude it_ (this can be done with the help of triggers), we consider the user wants to _combine_ maintenance windows.
-To know that, we can simply check if globalNodesUnderMaintenance[nodename] exists and is `true`.
-If it does not, we are NOT combining for this node, skip to next step.
-We then need to answer this question: _Can the node (already in a maintenance) be added to this maintenance window or does it exceed our cap of nodes for this maintenance window?_
+Check whether any window's entry for this node is `UnderMaintenance` (read the `globalNodesUnderMaintenance[nodename]` boolean). It can be another maintenance window OR THIS ONE.
+If it is *not* the case, move to next node at step 3.1, leaving the nodesToProcess untouched.
 
-For that, we follow our regular _add node to maintenance process_.
+Substep 3.2.1 Check if node is already in this current mw by any chance
+Read `currentMaintenanceWindows[mw.name][nodename]`. If it is `UnderMaintenance`, leave it as is.
+Remove the node from the `nodesToProcess` list.
+Continue to next node at step 3.1.
 
-For that we check the map `currentMaintenanceWindows[name]`.
-If `currentMaintenanceWindows[name][nodename]` is already `UnderMaintenance`, keep it that way. Delete the node from the list of nodes to process.
-If `currentMaintenanceWindows[name][nodename]` is not `UnderMaintenance`, we need to update it if we can (based on concurrency).
-Extract the _currentlyProcessingCount_ value from `currentMaintenanceWindows[name]`.
-If _currentlyProcessingCount_ < `spec.concurrency`, we can add a new node to the mix: Set `currentMaintenanceWindows[name][nodename]` to `UnderMaintenance`, regenerate the globalNodesUnderMaintenance. Remove the node from the node to process.
+Substep 3.2.2 _Can the node (already in a maintenance) be added to this maintenance window or does it exceed our cap of nodes for this maintenance window?_
+Extract the `currentlyProcessingNodesCount` value from `currentMaintenanceWindows[mw.name][*]==UnderMaintenance` (we already know you are NOT in it, thanks to 3.2.1)
+Extract the `mw.spec.concurrency`.
+If `currentlyProcessingCount` >= `spec.concurrency`,
+  set `currentMaintenanceWindows[mw.name][nodename]=`MaxConcurrencyReached` and regenerate the `globalNodesUnderMaintenance`.
+  Remove the node from the `nodesToProcess` list.
+  Continue with the next node at step 3.1
 
-Fourth step: Dealing with nodes when NOT combining maintenance windows.
-The rest of the nodes have _not been triggered_ by maintenance windows.
+Else, add the new node to the mix:
+  Set `currentMaintenanceWindows[name][nodename]` to `UnderMaintenance` and regenerate the globalNodesUnderMaintenance.
+  Remove the node from the `nodesToProcess` list.
+  Continue to next node at step 3.1.
+
+Fourth step - Iterate over each node in reverse order.
+The remaining of the `nodesToProcess` are not part of any "combined" maintenance windows. We are talking about "Standalone" mw.
 We probably want to have _older nodes_ processed first.
-So we iterate over the list we got at the beginning of the third step in the _reverse order_.
+So we iterate over the list `nodesToProcess` in the _reverse order_.
+We know that the node cannot be already `UnderMaintenance`, or it would have been caught in substep 3.2.
 
-We know that step 3 has processed unmet, and already under maintenance nodes. 
-We only need to follow the regular _add node to maintenance process_.
-
-For the node, we check the map `currentMaintenanceWindows[name]`.
-If `currentMaintenanceWindows[name][nodename]` is already `UnderMaintenance`, keep it that way. Delete the node from the list of nodes to process.
-If `currentMaintenanceWindows[name][nodename]` is not `UnderMaintenance`, we need to update it if we can (based on concurrency).
-Extract the _currentlyProcessingCount_ value from `currentMaintenanceWindows[name]`.
-If _currentlyProcessingCount_ < `spec.concurrency`, we can add a new node to the mix: Set `currentMaintenanceWindows[name][nodename]` to `UnderMaintenance`, regenerate the globalNodesUnderMaintenance. Remove the node from the node to process.
-Else, _currentlyProcessingCount_ >= `spec.concurrency`. It means the node cannot be put under maintenance: Mark it with MaxConcurrencyReached.
+Substep 4.1 - _Can the node (already in a maintenance) be added to this maintenance window or does it exceed our cap of nodes for this maintenance window?_
+This is the same question as 3.2.2, and we proceed _similarly to it_. Just continue at step 4.1 instead of 3.1.
 
 No nodes should be left to process.
 The maintenance window data is ready.
 
-Fifth step: Update k8s data for the maintenance window `status`.
+Fifth step - update the mw status.
+Update the MaintenanceWindow `status.nodeStates`.
 
-The autoritative information about maintenance is now accurate in the currentMaintenanceWindows[name].
-Write the mw's `status.nodesUnderMaintenance` with the data from `currentMaintenanceWindows[name]`.
+Sixth step - update all the nodes
+Loop over `pristineListOfNodes`.
+If node.Status.Conditions.["MaintenanceInProgress"].Status for the node != `globalNodesUnderMaintenance[nodename]`, update the node. This can happen upon entering or leaving the mw.
+If node.Status.Condition.[mw.spec.extraConditionType].Status for the node != `currentMaintenanceWindows[mw.name][nodename]==UnderMaintenance`, update the node. This can happen upon entering or leaving the mw.
+Move to next node.
 
-This also means the k8s node objects ARE NOT UP TO DATE with the reconciled data.
-
-Final step: Transition the required kubernetes nodes
-We now can reuse the pristine list of nodes, and compare the nodes's following Conditions types
-- MaintenanceInProgress
-- condition type stored in the mw.`extraConditionType` if any.
-
-Prepare a write if `pristinelist[nodename].status.Conditions.MaintenanceInProgress.Value` or `pristinelist[nodename].status.Condition.<extraconditiontype>.Value` differs from globalNodesUnderMaintenance
-(Also check if the reason need updating!). No update happens on Unknown Value.
-
-Post it to k8s api, which may cause a reconcile of the MWs, but should be smartly filtered with the correct predicates.
+Warning: In 6th step, when I say update the node, I mean: Patch only kumaco-owned condition types on `nodes/status`, preserving other reporters' conditions.
+Do not replace the whole conditions list. If a node changed since it was read or a patch conflicts, refetch and requeue the affected window to recompute its decision.
+Repeated reconciles should write nothing when conditions and reasons match.
+Refresh heartbeat timestamps when due on conditions still owned by the controller. Heartbeat-only node changes will not cause another admission pass (they are filtered).
 
 ### Handling MaintenanceWindow conflicts
 
@@ -271,12 +329,6 @@ No node has the resulting `MaintenanceInProgress` set to True.
 As the update of the k8s only happen at the end of the reconcile, no concurrency conflicts should happen:
 - Each node has its own state in its own mw (including a MaxConcurrencyReached if necessary)
 - We reconcile across all nodes across all mw afterwards
-
-### What does the controller watch?
-
-1. cluster-wide custom resources `MaintenanceWindow` (matching a certain label if configured for it, for example in the case of multiple kumaco deployments);
-2. node changes;
-3. time-based requeues.
 
 ### multi-tenancy while doing self-service is *not an afterthough*
 
@@ -382,8 +434,7 @@ This causes requeuing on kumaco, but it is fine: we most do events...
 
 ## Metrics
 
-Metrics report the same decisions as reconciliation;
-the two maps are the record used to rebuild slot occupancy after a restart.
+Metrics report the same decisions as reconciliation. On startup, the controller rebuilds the two in-memory maps from the managed nodes and MaintenanceWindows before exporting their values.
 
 Each controller exports, based on those maps:
 
@@ -394,14 +445,28 @@ Each controller exports, based on those maps:
   `MaintenanceInProgress` is `True`, 0 otherwise.
   Reflects the content of `globalNodesUnderMaintenance`
 
-## Gochas
+## Gotchas
 
 A trigger depending on the condition this window changes can oscillate.
 For example, requiring MaintenanceInProgress to be absent causes it to alternate between True and False.
 
-The user should not do that.
-We do not validate it. If the administrator is afraid of that, it can write an admission rule preventing
-the use of MaintenanceInProgress or preventing the use of the extraConditionType in the trigger.
+The user should not do that. We do not validate it. An administrator can use an admission rule to prohibit self-referential triggers; reading a condition set by a different window can be intentional.
+
+`status.nodeStates` is stored in a single Kubernetes object. Even with numeric values,
+node names and JSON overhead can exceed the API's object-size limit. Configure a
+maximum number of **managed** nodes per window at controller startup (via CLI or
+environment). If it is exceeded, mark the window `Invalid`, emit an event, and publish
+an empty `status.nodeStates` rather than silently truncating it; its in-memory states
+remain `InvalidMaintenanceWindow` so existing authorization is cleared. This is the
+exception to publishing an entry for every managed node.
+
+When a window is deleted, remove its map and recompute `MaintenanceInProgress` for all
+managed nodes, even if no windows remain. Kumaco stops refreshing the deleted window's
+extra condition. If deletion happened while kumaco was down, its CRD and condition type
+are gone and the extra condition cannot be identified for cleanup. Its stale `True`
+remains `True`: consumers must check heartbeat freshness if they use an extra condition
+as authorization; a heartbeat alone does not revoke it immediately. The same limit
+applies if the condition type changed while kumaco was down.
 
 ## Debugging with kumaco events
 
