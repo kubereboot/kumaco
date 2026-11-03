@@ -2,6 +2,7 @@
 
 - [kumaco - Kubernetes Maintenance Controller](#Introduction)
 - [Behaviour](#Behaviour)
+- [Metrics](#metrics)
 - [Debugging](#Debugging-with-kumaco-events)
 - [Security and access rights](#Security-and-access-rights)
 - [Getting Help](#Getting-Help)
@@ -49,94 +50,201 @@ A CRD allow us to:
 - Let people define their own admission events.
 
 The MaintenanceWindow CRD's spec contains:
-- startTime (the scheduled start of the maintenance window, according to the cron standard)
-- duration (the duration of the maintenance window from the startTime)
-- nodeSelector (the nodes on which the maintenance window is applied to. A kubernetes labelSelector)
-- trigger (the list CEL expressions that need to ALL apply to mark the node under evaluation under maintenance)
+- `startTime`: a cron-like string.
+  It is structured as the following:
+  - an optional `CRON_TZ=<IANA timezone>`. Without `CRON_TZ`, the timezone is UTC.
+  - seven Quartz-style fields: second, minute, hour, day of month, month, day of week, year.
+  
+  For example,
+  `CRON_TZ=Europe/Berlin 0 0 2 1 1 ? 2027` starts once at 02:00 Berlin time on 2027-01-01;
+  `CRON_TZ=Europe/Berlin 0 0 2 * * ? *` starts daily at 02:00 local time.
+
+  The timezone prefix plus year-aware fields is kumaco's defined input format, not a
+  universally standardized cron expression.
+
+- `duration` (duration): maximum real elapsed time for a maintenance window. In other words: a maintenance window is active if between [startTime, startTime+duration]
+- `nodeSelector` (kubernetes labelSelector): the nodes on which the maintenance window is applied to.
+- `triggers` (list): A list of CEL expressions that need to ALL apply to mark the node under evaluation as triggered for maintenance
   Triggers can be based on diverse node information: labels, annotations, name, status, and conditions.
-- concurrency (the maximum amount of nodes that can be set under maintenance at the same time)
+- `concurrency` (int): the maximum number of distinct nodes admitted for this maintenance window.
+  A node already counted in another maintenance window will already be counted.
+  In other words, the maximum nodes for a single maintenance window can already be _exceeded_ at maintenance startTime.
+  See concurrency conflicts below;
+- `extraConditionType` (optional, string). Any eventual extra condition type to set on the node when it goes into / leaves maintenance.
+  This can be used for legacy reasons or to track multiple concurrent maintenance that should not overlap their node actions.
+
+Daylight saving time follows the configured timezone without special handling: if a
+scheduled local time does not exist when clocks move forward, that occurrence does not
+start; if a local time repeats when clocks move back, both occurrences start. Even a
+fixed-year schedule can therefore start twice on that date. Overlapping occurrences
+keep the window `InProgress` until the last one ends.
 
 The MaintenanceWindow CRD's status contains:
-- `state` is a summarized result, determined based on spec and conditions.
+- `state` (enum): This is a summarized result, determined based on spec and conditions.
   State is a practical way for users to check the overall state,
   rather than checking all the conditions independently.
   This is particularly useful when the maintenance manager sets complex CEL rules.
   `state` can be:
-  - `InProgress`: self-explanatory :)
-  - `Scheduled`: When the cron has a possible _future_ start
-  - `Closed`: When the cron expression has no possible _future_ start
-  - `Invalid`: When the input of the CRD is incorrect.
+  - `InProgress`: the current time falls within a scheduled occurrence and its duration.
+  - `Scheduled`: no occurrence is active, but a future occurrence exists.
+  - `Closed`: no occurrence is active and no future occurrence exists (including a one-off
+    window whose duration has elapsed).
+  - `Invalid`: the input of the CRD is incorrect.
+- `nodesUnderMaintenance` (map): This is map containing all the nodes matching the nodeSelector, and their combined _Trigger_ and _concurrency_ state.
+  In other words: `nodesUnderMaintenance` has keys equal to node names, and value a string: UnderMaintenance/UnmetTrigger/MaxConcurrencyReached/Unknown
+
+### What does it look like on my node?
+
+Most of the time:
+
+```
+type: `MaintenanceInProgress`
+status: False
+reason: KumaNoMaintenanceWindow
+message: "No active maintenance window selecting this node exists"
+lastTransitionTime: <date and time of the first poll where no triggers match>
+lastHeartbeatTime: <recent time showing controller liveness>
+```
+
+If safeguarded:
+```
+type: `MaintenanceInProgress`
+status: False
+reason: KumaTriggersMismatch
+message: "No active maintenance window selecting this node has all its triggers matching"
+lastTransitionTime: <date and time of the first poll where no triggers match>
+lastHeartbeatTime: <recent time showing controller liveness>
+```
+
+During a maintenance:
+
+```
+type: `MaintenanceInProgress`
+status: True
+reason: KumaEnteredMaintenanceWindow
+message: "An active maintenance window selecting this node exists"
+lastTransitionTime: <date and time of the first poll where no triggers match>
+lastHeartbeatTime: <recent time showing controller liveness>
+```
+
+### How does it work?
+
+#### Data structure
+
+We mostly rely on two global mutated maps with locks:
+- currentMaintenanceWindows
+- globalNodesUnderMaintenance
+
+`currentMaintenanceWindows` is a global map, with maintenance window names as keys (read from the CRD's metadata.name), and as values a map containing NodeMaintenanceInformation (Key = node name, Value = enum UnderMaintenance/UnmetTrigger/MaxConcurrencyReached/Unknown).
+In other words: `currentMaintenanceWindows[mw name][node name] gives you the authoritative information about whether the node is UnderMaintenance, has Unmet Trigger, cannot be added to maintenance due to maximum concurrency reached FOR A DETERMINED MAINTENANCE.
+
+`globalNodesUnderMaintenance` is a global map, it contains as keys the nodenames, and as value boolean (True for MaintenanceInProgress, False otherwise).
+It is meant as efficient tool to query information ABOUT WHETHER A NODE IS UNDER ANY MAINTENANCE (regardless of the maintenance window).
+This is a tool for querying, not writing, information.
+This map is regenerated every time there is a change in `currentMaintenanceWindows`.
+
+#### Reconciliation process
+
+We reconcile each MaintenanceWindow separately.
+
+The queuing (reconciliation of the maintenance windows) should happen:
+- On timer, as it might change based on schedule
+- On a periodic basis, to guarantee the state is still accurate
+- At each node spec change / relevant status change / Condition transition
+
+First step is defining the `status.state` based on schedule.
+Any Closed/Invalid state deletes the `currentMaintenanceWindows[name]` and triggers an update of `globalNodesUnderMaintenance`.
+It also updates the k8s API, setting the mw's `status.nodesUnderMaintenance` as an empty map.
+
+Second step: we query kubernetes API and fetch all the nodes matching the nodeSelector.
+We create an in-memory map `currentMaintenanceWindows[name]`.
+Any new node is added as `currentMaintenanceWindows[name][nodename]=Unknown`.
+Any node NOT MATCHING ANYMORE will be removed from currentMaintenanceWindows[name].
+Again, if any change happen, regenerate the map globalNodesUnderMaintenance.
+
+Third step: we iterate to check each node in a recent order.
+For that, we sort the list of all nodes by the node's condition `MaintenanceInProgress`'s last Transition time if it exists.
+If not, by node age. More recent first.
+
+At this point copy the list of nodes queried from k8s api (to keep it pristine, see why at the end of this section), as the list of nodes to process will be mutated in this reconcile loop.
+
+A) Matching trigger
+We set `currentMaintenanceWindows[name][nodename]=UnmetTrigger` for the nodes who do not match the trigger, regardless of whether the node is already active in another maintenance Window or whether it was previously met.
+Again, any update should refresh globalNodesUnderMaintenance.
+Delete the node from the list of nodes to process.
+Skip the rest of the loop for this node.
+
+I repeat: Do not set anything else if the trigger is met. This will be done later.
+
+B) Combining maintenance windows
+If a node is _already in another maintenance window_ and the user has decided to _not exclude it_ (this can be done with the help of triggers), we consider the user wants to _combine_ maintenance windows.
+To know that, we can simply check if globalNodesUnderMaintenance[nodename] exists.
+If it does not, we are NOT combining for this node, skip to next step.
+We then need to answer this question: _Can the node (already in a maintenance) be added to this maintenance window or does it exceed our cap of nodes for this maintenance window?_
+
+For that, we follow our regular _add node to maintenance process_.
+
+For that we check the map `currentMaintenanceWindows[name]`.
+If `currentMaintenanceWindows[name][nodename]` is already `UnderMaintenance`, keep it that way. Delete the node from the list of nodes to process.
+If `currentMaintenanceWindows[name][nodename]` is not `UnderMaintenance`, we need to update it if we can (based on concurrency).
+Extract the _currentlyProcessingCount_ value from `currentMaintenanceWindows[name]`.
+If _currentlyProcessingCount_ < `spec.concurrency`, we can add a new node to the mix: Set `currentMaintenanceWindows[name][nodename]` to `UnderMaintenance`, regenerate the globalNodesUnderMaintenance. Remove the node from the node to process.
+
+Fourth step: Dealing with nodes when NOT combining maintenance windows.
+The rest of the nodes have _not been triggered_ by maintenance windows.
+We probably want to have _older nodes_ processed first.
+So we iterate over the list we got at the beginning of the third step in the _reverse order_.
+
+We know that step 3 has processed unmet, and already under maintenance nodes. 
+We only need to follow the regular _add node to maintenance process_.
+
+For the node, we check the map `currentMaintenanceWindows[name]`.
+If `currentMaintenanceWindows[name][nodename]` is already `UnderMaintenance`, keep it that way. Delete the node from the list of nodes to process.
+If `currentMaintenanceWindows[name][nodename]` is not `UnderMaintenance`, we need to update it if we can (based on concurrency).
+Extract the _currentlyProcessingCount_ value from `currentMaintenanceWindows[name]`.
+If _currentlyProcessingCount_ < `spec.concurrency`, we can add a new node to the mix: Set `currentMaintenanceWindows[name][nodename]` to `UnderMaintenance`, regenerate the globalNodesUnderMaintenance. Remove the node from the node to process.
+Else, _currentlyProcessingCount_ >= `spec.concurrency`. It means the node cannot be put under maintenance: Mark it with MaxConcurrencyReached.
+
+No nodes should be left to process.
+The maintenance window data is ready.
+
+Next step:Update k8s data for the maintenance window `status`.
+
+The autoritative information about maintenance is now accurate in the currentMaintenanceWindows[name].
+Write the mw's `status.nodesUnderMaintenance` with the data from `currentMaintenanceWindows[name]`.
+
+This also means the k8s node objects ARE NOT UP TO DATE with the reconciled data.
+
+Final step: Transition the required kubernetes nodes
+We now can reuse the pristine list of nodes, and compare the nodes's following Conditions types
+- MaintenanceInProgress
+- condition type stored in the mw.`extraConditionType` if any.
+
+Prepare a write if `pristinelist[nodename].status.Conditions.MaintenanceInProgress.Value` and `pristinelist[nodename].status.Condition.<extraconditiontype>.Value` differs from globalNodesUnderMaintenance
+(Also check if the reason need updating!).
+
+Post it to k8s api, which will cause a reconcile of all MW, which should double check the current state.
+As no other writes should be happening, the write will stop there.
 
 ### Handling MaintenanceWindow conflicts
 
 #### Scheduling conflicts
 
-If two maintenance windows overlap, only one is required to set the node's `kuma.kured.dev/InWindow`.
+If two maintenance windows overlap, only one is sufficient to be considered as _under maintenance_.
 In other words if you have two MaintenanceWindows A and B applied on all the nodes of a cluster:
 
-A might be in state Closed/Sheduled
+A might be in state Closed/Scheduled
 B might be in state InProgress
 
---> All nodes will have a condition like this:
-
-```
-type: `kuma.kured.dev/InWindow`
-status: True
-reason: KumacoEnteredMaintenance
-message: "Under at least one maintenance window"
-lastTransitionTime: <time of the Maintenance Window start>
-lastHeatbeatTime: <recent time showing controller liveness>
-```
-
-(logs or events can help figure out which maintenance window is flipping the condition, metrics
-can highlight all the open MaintenanceWindows).
-
-At the opposite, when no maintenance window is valid:
-
-```
-type: `kuma.kured.dev/InWindow`
-status: False
-reason: KumacoNoMaintenance
-message: "No maintenance in progress"
-lastTransitionTime: <date and time of the first poll where no maintenance is remaining>
-lastHeatbeatTime: <recent time showing controller liveness>
-```
+--> All nodes will be considered for _under maintenance_.
 
 #### Triggering conflicts
 
-If two maintenance windows overlap, only one is required to set the node's `kuma.kured.dev/Triggered`.
+For example, A is active but its trigger does not match; B's trigger matches but
+B is closed. Neither window makes the node eligible.
 
-Let's take this example:
-
-The MaintenanceWindow A requests for all nodes to have the following two conditions:
-- `kuma.kured.dev/InWindow` set to true
-- `detector.kured.dev/RebootRequired` set to true
-
-The MaintenanceWindow B requests for all nodes to have this condition:
-- `kuma.kured.dev/InWindow` set to true
-
-Then, because any MaintenanceWindow is _sufficient_ to set the `kuma.kured.dev/Triggered`, 
-all nodes will have the following condition:
-
-```
-type: `kuma.kured.dev/Triggered`
-status: True
-reason: KumacoTriggersMatched
-message: "Triggered by at least one maintenance window"
-lastTransitionTime: <time of the trigger successfully matching>
-lastHeatbeatTime: <recent time showing controller liveness>
-```
-
-At the opposite, when 100% of the triggers of all Maintenance Windows do not apply on the node:
-
-```
-type: `kuma.kured.dev/Triggered`
-status: False
-reason: KumacoTriggersMismatch
-message: "No maintenance window has all its triggers matching for this node"
-lastTransitionTime: <date and time of the first poll where no maintenance is remaining>
-lastHeatbeatTime: <recent time showing controller liveness>
-```
+If B becomes active and selects the node, B alone is sufficient to set the
+node under maintenance.
 
 #### nodeSelector and trigger conflicts
 
@@ -144,31 +252,22 @@ The nodeSelector has _precedence_ over trigger.
 
 Let's take the following scenarios:
 
-First, a MaintenanceWindow has a nodeSelector for all nodes, with a trigger matching node.name == "node1".
-In this case, the MaintenanceWindow.Triggered True will be set on node1, False on all other nodes.
+First case, a MaintenanceWindow has a nodeSelector for all nodes, with a trigger matching node.metadata.name == 'node1'.
+In this case, the triggered case will be true on node1, false on all other nodes.
 Only node1 will have the resulting `MaintenanceInProgress` condition.
 
-Second, a MaintenanceWindow has a selector to only match node1, with a trigger matching all nodes.
-In this case, the MaintenanceWindow.Triggered True will be set on node1.
-This condition won't be set on all other nodes!
-Only node1 will have the resulting `MaintenanceInProgress` condition, as the condition requires both the trigger and the InWindow to be set to True.
+Second case, a MaintenanceWindow has a selector to only match node1, with a trigger matching all nodes.
+In this case, the triggered case will be true on node1, false on other nodes
+Only node1 can have the resulting `MaintenanceInProgress` condition, because the same window must select it and match its triggers while active.
 
-Third, a MaintenanceWindow has a selector to match node1, with a trigger matching only node2.
-In this case, the MaintenanceWindow.Triggered is False to node 1.
-This condition won't be set on other nodes.
+Third case, a MaintenanceWindow has a selector to match node1, with a trigger matching only node2.
 No node has the resulting `MaintenanceInProgress` set to True.
 
-#### concurrency conflicts
+#### Concurrency conflicts
 
-As concurrency is aiming to be the _maximum number of nodes that can be in maintenance at a single point_, this spirit is followed when multiple maintenance windows are concurrent.
-
-In other words: In a scenario where two maintenance windows have different concurrencies values, the Maximum concurrency will be taken.
-
-This allows for faster maintenance, and not restrict a maintenance window size in progress.
-To reduce a maintenance window in progress, adapt the nodeSelector or the trigger (which will recompute all the maintenance windows).
-
-Side note: The depending controllers might not react properly to rapid changes of `MaintenanceInProgress` values.
-Check with the other controllers about their expected behaviours.
+As the update of the k8s only happen at the end of the reconcile, no concurrency conflicts should happen:
+- Each node has its own state in its own mw (including a MaxConcurrencyReached if necessary)
+- We reconcile across all nodes across all mw afterwards
 
 ### What does the controller watch?
 
@@ -181,34 +280,47 @@ Check with the other controllers about their expected behaviours.
 This solves the following use case:
 "As a maintenance manager of team X, I want to reboot all my team X nodes but not team Y nodes".
 
+Each team owns a separate, non-overlapping group of nodes and runs one kumaco controller
+for that group. The cluster administrator must keep the groups disjoint: two controllers
+writing the same node conditions would overwrite each other's decisions. Each controller
+has its own concurrency pool.
+
 #### The harder approach: the service-account limitations
 
 If you have a kubernetes cluster used by different teams, you can do this by running
 n deployments of kumaco, each of them with their own serviceAccount.
 
-You can then grant rights of the serviceAccount to a predefined set of node objects, preventing
-unauthorized access to nodes.
-
-In this case, kumaco might actually fail to setup conditions for nodes on which it has no access,
-proving isolation.
+For fixed node groups, grant each controller ServiceAccount `nodes/status` write rights
+only for its team's node names (using RBAC `resourceNames`). Do not grant the same node
+to two controllers. When moving a node between teams, clear the old controller's
+conditions before revoking its write access, then grant access to the new controller.
+The controller can watch node changes with read-only access, but must not write status on
+nodes outside its group.
 
 #### The softer approach: the controller watch label
 
 If you have a kubernetes cluster used by different teams, you can do this by running
 n deployments of kumaco, each of them with their watcher label.
 
-Kumaco will only watch for CRD matching the label configured for them.
+Kumaco will only watch for MaintenanceWindows matching the label configured for its team.
+This label alone is not a node access boundary; the administrator must ensure the teams'
+node groups do not overlap.
 
 In other words, the administrator has configured the kumaco controller deployment for team A
 to only watching for MaintenanceWindow CRDs matching the label "MaintenanceWindowTeam: A".
 The administrator has configured another kumaco controller deployment, for team B, only
 watching for the MaintenanceWindow CRD matching the label "MaintenanceWindowTeam: B".
 
-To guarantee multi-tenancy, the administrator has to define an admission policy (with tools like
-kubewarden, kyverno, or OPA) tying the identity of the user with:
-- its team 
-- the applied label
-- the nodeSelector
+For this approach, the administrator must enforce an admission policy (with tools like
+kubewarden, kyverno, or OPA) tying the maintenance manager's identity to:
+- their team;
+- the MaintenanceWindow's team label;
+- a nodeSelector that includes an administrator-controlled team label matching only
+  that team's nodes.
+
+Kubernetes RBAC cannot restrict `nodes/status` writes by node label. If write access is
+not restricted to named nodes, the administrator must trust the deployment and its
+admission policy to preserve the separation between teams.
 
 ### How kured relies on kumaco, and how to configure your maintenance window for kured:
 
@@ -216,13 +328,32 @@ Basic configuration for kured is the following:
 
 1) Set the maintenance window time
 2) Set the nodeSelector
-3) Set the following trigger:
+3) Set the following CEL triggers (all must match):
 
-- node.Conditions[].type == "detector.kured.dev/RebootRequired" == true
-- node.Conditions[].type == "blockers.kured.dev/NoPodInhibitor" == true
-- node.Conditions[].type == "blockers.kured.dev/NoAlertInhibitor" == true
+```cel
+node.status.conditions.exists(c, c.type == 'detector.kured.dev/RebootRequired' && c.status == 'True')
+node.status.conditions.exists(c, c.type == 'blockers.kured.dev/NoPodInhibitor' && c.status == 'True')
+node.status.conditions.exists(c, c.type == 'blockers.kured.dev/NoAlertInhibitor' && c.status == 'True')
+```
 
-#### Explanation
+This example assumes you are running the blocker reporter, which publishes explicit `NoPodInhibitor` and
+`NoAlertInhibitor` conditions.
+This component set the value to `True` only when it has checked and found no blocker.
+For these triggers, missing, `False`, and `Unknown` do not authorize maintenance.
+
+Other triggers may explicitly match a missing or `Unknown` condition, for example:
+
+```cel
+!node.status.conditions.exists(c, c.type == 'blockers.kured.dev/NoPodInhibitor')
+node.status.conditions.exists(c, c.type == 'blockers.kured.dev/NoPodInhibitor' && c.status == 'Unknown')
+```
+
+Each expression above matches only its stated case; it does not override the schedule,
+selector, or other triggers. If a reporter publishes a condition only when blocked and
+removes it otherwise, absence cannot distinguish "safe" from "not checked yet". The
+positive `NoPodInhibitor` trigger above requires the reporter to report readiness.
+
+#### Explanation of interconnection with kured
 
 This controller can not only be used to _define a condition on nodes_,
 it can be used as _the brain of maintenances_.
@@ -233,10 +364,30 @@ was in maintenance to _trigger the rest of the process_
 
 Kured requires kumaco to:
 - Check whether the node is in a maintenance windows (core feature of kumaco)
-- Check whether the node has other positively matching Conditions: the node needs to be rebooted (=have the condition `kured.dev/RebootRequired`), on top of being in a maintenance window, to have the `MaintenanceInProgress` condition.
-- Check whether the node has _blocking_ conditions preventing the `MaintenanceInProgress`. For example, kured has a `RebootInhibitors` controller to guarantee the reboot will not happen if some alert is triggered or some pod is present on the node.
-  This `RebootInhibitors` sets _blocking_ condition when inhibited, cleans it up when not inhibited anymore.
-- Guarantee a maximum of n concurrent `MaintenanceInProgress`. kumaco is required to check all nodes positively matching, removing the negatively matching ones, then select the results until the concurrency ceiling is reached.
+- Check whether the node has other positively matching conditions (core feature of kumaco):
+  the node needs `detector.kured.dev/RebootRequired` set to `True` in order to start the Maintenance
+  (and set `MaintenanceInProgress`).
+- Check that neither a pod nor an alert inhibits the reboot, using the positive conditions shown above.
+  With these triggers, an absent or `Unknown` inhibitor report does not authorize maintenance.
+  This is also a core feature of kumaco.
+- Admit nodes only while slots remain under the highest `maximumCount` of active windows,
+  counting both authorized and in-flight nodes as described above. This is also a core
+  feature of kumaco.
+
+Kured then only focuses on setting new conditions/labels/annotations on nodes and rebooting.
+This causes requeuing on kumaco, but it is fine: we most do events...
+
+## Metrics
+
+Metrics report the same decisions as reconciliation; node conditions, not metrics, are
+the record used to rebuild slot occupancy after a restart. Each controller exports:
+
+- `kumaco_maintenance_window_active{window}`: gauge, 1 while that window's schedule is
+  active, 0 otherwise.
+- `kumaco_maintenance_window_nodes{window}`: gauge, number of nodes in maintenance.
+- `kumaco_node_slot_occupied{node}`: gauge for each managed node, 1 if
+  `MaintenanceInProgress` or the in-flight condition is `True`, 0 otherwise.
+  Reflects the content of `globalNodesUnderMaintenance`
 
 ## Debugging with kumaco events
 
@@ -244,11 +395,12 @@ kumaco displays actions in its logs, which are intended for the _kumaco deployer
 
 ## Security and access rights
 
-The controller ServiceAccount must be able to:
-- Watch its CRD
-- Apply a _status_ change to nodes and read all nodes
-
-This also means the privileges are restricted.
+Maintenance managers need permission to manage their team's MaintenanceWindows, not
+permission to write nodes. Each controller ServiceAccount needs to watch its windows,
+read nodes, and update `nodes/status` for its team's nodes. RBAC can restrict writes to
+named nodes with `resourceNames`, but not to particular node condition types or to
+nodes matching a label. Grant only the node names that controller should manage; a
+compromised controller can change *any* status condition on those allowed nodes.
 
 ## Getting Help
 
