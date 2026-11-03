@@ -153,11 +153,13 @@ The queuing (reconciliation of the maintenance windows) should happen:
 - At each node spec change / relevant status change / Condition transition
 
 First step is defining the `status.state` based on schedule.
-Any Closed/Invalid state deletes the `currentMaintenanceWindows[name]` and triggers an update of `globalNodesUnderMaintenance`.
-It also updates the k8s API, setting the mw's `status.nodesUnderMaintenance` as an empty map.
+Any Closed/Invalid state deletes the `currentMaintenanceWindows[name]` and triggers an update of `globalNodesUnderMaintenance` (setting the nodes as not under maintenance).
+Skip to fifth step (update k8s api) and then do the 6th step (node conditions cleanup)
 
 Second step: we query kubernetes API and fetch all the nodes matching the nodeSelector.
 We create an in-memory map `currentMaintenanceWindows[name]`.
+At this point copy the list of nodes queried from k8s api (to keep it pristine, see why at the end of this section), as the list of nodes to process will be mutated in this reconcile loop.
+
 Any new node is added as `currentMaintenanceWindows[name][nodename]=Unknown`.
 Any node NOT MATCHING ANYMORE will be removed from currentMaintenanceWindows[name].
 Again, if any change happen, regenerate the map globalNodesUnderMaintenance.
@@ -165,8 +167,6 @@ Again, if any change happen, regenerate the map globalNodesUnderMaintenance.
 Third step: we iterate to check each node in a recent order.
 For that, we sort the list of all nodes by the node's condition `MaintenanceInProgress`'s last Transition time if it exists.
 If not, by node age. More recent first.
-
-At this point copy the list of nodes queried from k8s api (to keep it pristine, see why at the end of this section), as the list of nodes to process will be mutated in this reconcile loop.
 
 A) Matching trigger
 We set `currentMaintenanceWindows[name][nodename]=UnmetTrigger` for the nodes who do not match the trigger, regardless of whether the node is already active in another maintenance Window or whether it was previously met.
@@ -178,7 +178,7 @@ I repeat: Do not set anything else if the trigger is met. This will be done late
 
 B) Combining maintenance windows
 If a node is _already in another maintenance window_ and the user has decided to _not exclude it_ (this can be done with the help of triggers), we consider the user wants to _combine_ maintenance windows.
-To know that, we can simply check if globalNodesUnderMaintenance[nodename] exists.
+To know that, we can simply check if globalNodesUnderMaintenance[nodename] exists and is `true`.
 If it does not, we are NOT combining for this node, skip to next step.
 We then need to answer this question: _Can the node (already in a maintenance) be added to this maintenance window or does it exceed our cap of nodes for this maintenance window?_
 
@@ -208,7 +208,7 @@ Else, _currentlyProcessingCount_ >= `spec.concurrency`. It means the node cannot
 No nodes should be left to process.
 The maintenance window data is ready.
 
-Next step:Update k8s data for the maintenance window `status`.
+Fifth step: Update k8s data for the maintenance window `status`.
 
 The autoritative information about maintenance is now accurate in the currentMaintenanceWindows[name].
 Write the mw's `status.nodesUnderMaintenance` with the data from `currentMaintenanceWindows[name]`.
@@ -220,7 +220,7 @@ We now can reuse the pristine list of nodes, and compare the nodes's following C
 - MaintenanceInProgress
 - condition type stored in the mw.`extraConditionType` if any.
 
-Prepare a write if `pristinelist[nodename].status.Conditions.MaintenanceInProgress.Value` and `pristinelist[nodename].status.Condition.<extraconditiontype>.Value` differs from globalNodesUnderMaintenance
+Prepare a write if `pristinelist[nodename].status.Conditions.MaintenanceInProgress.Value` or `pristinelist[nodename].status.Condition.<extraconditiontype>.Value` differs from globalNodesUnderMaintenance
 (Also check if the reason need updating!).
 
 Post it to k8s api, which will cause a reconcile of all MW, which should double check the current state.
@@ -370,9 +370,9 @@ Kured requires kumaco to:
 - Check that neither a pod nor an alert inhibits the reboot, using the positive conditions shown above.
   With these triggers, an absent or `Unknown` inhibitor report does not authorize maintenance.
   This is also a core feature of kumaco.
-- Admit nodes only while slots remain under the highest `maximumCount` of active windows,
-  counting both authorized and in-flight nodes as described above. This is also a core
-  feature of kumaco.
+- Restrict how many nodes can be under maintenance at the same time for a maintenance.
+  This is also a core feature of kumaco, restricting the amount of nodes per maintenance
+  window, and bundling the maintenance window together if possible.
 
 Kured then only focuses on setting new conditions/labels/annotations on nodes and rebooting.
 This causes requeuing on kumaco, but it is fine: we most do events...
@@ -386,7 +386,7 @@ the record used to rebuild slot occupancy after a restart. Each controller expor
   active, 0 otherwise.
 - `kumaco_maintenance_window_nodes{window}`: gauge, number of nodes in maintenance.
 - `kumaco_node_slot_occupied{node}`: gauge for each managed node, 1 if
-  `MaintenanceInProgress` or the in-flight condition is `True`, 0 otherwise.
+  `MaintenanceInProgress` is `True`, 0 otherwise.
   Reflects the content of `globalNodesUnderMaintenance`
 
 ## Debugging with kumaco events
