@@ -64,8 +64,8 @@ The MaintenanceWindow CRD's spec contains:
 
 - `duration` (duration): maximum real elapsed time for a maintenance window. In other words: a maintenance window is active if between [startTime, startTime+duration]
 - `nodeSelector` (kubernetes labelSelector): the nodes on which the maintenance window is applied to.
-- `triggers` (list): A list of CEL expressions that need to ALL apply to mark the node under evaluation as triggered for maintenance
-  Triggers can be based on diverse node information: labels, annotations, name, status, and conditions.
+- `triggers` (list): A list of CEL expressions that need to ALL apply to mark the node under evaluation as triggered for maintenance.
+  Triggers can read the node's name, labels, annotations, spec (including whether it is cordoned via `node.spec.unschedulable`), and `node.status.conditions`. Other node status fields are not available to CEL.
 - `concurrency` (int): the maximum number of distinct nodes admitted for this maintenance window.
   A node already counted in another maintenance window might be reused for two maintenance at the same time (depends on their triggers). See concurrency conflicts below;
 - `extraConditionType` (optional, string): an extra node condition owned by this window,
@@ -118,7 +118,11 @@ Therefore:
 
 1. All spec changes are therefore relevant.
 2. From the metadata perspective, only labels and annotations are relevant.
-3. From the status perspective, only Conditions are considered relevant. (We consider MaintenanceInProgress irrelevant though).
+3. From the status perspective, only Conditions are considered relevant (excluding kumaco's own `MaintenanceInProgress` changes).
+
+If a fact from another node status field should affect maintenance, its reporter must
+publish it as a node condition, for example with node-problem-detector. CEL triggers
+then read that condition rather than the original status field.
 
 ### What does it look like on my node?
 
@@ -181,9 +185,9 @@ The step to rebuild the world view is to read all MaintenanceWindows
 and run the usual reconcile loop _without k8s writes_.
 For that, we need to load/evaluate all existing mw (with the same functions as usual
 reconcile).
-To speed up things, we do not rebuild the `globalNodesUnderMaintenance` yet: it will
-be quickly outdated. Instead, we do it when all the mw are read
-(=when `currentMaintenanceWindows` is up to date).
+Rebuild `globalNodesUnderMaintenance` as each window's decisions change so later
+windows can see earlier decisions when combining maintenance. Do not publish node
+conditions until all windows have been evaluated and the final global map is built.
 
 After this point, both `currentMaintenanceWindow` and `globalNodesUnderMaintenance`
 are considered "fresh" (though they might be already outdated), but the nodes
@@ -283,7 +287,7 @@ If node.Status.Condition.[mw.spec.extraConditionType].Status for the node != `cu
 Move to next node.
 
 Warning: In 6th step, when I say update the node, I mean: Patch only kumaco-owned condition types on `nodes/status`, preserving other reporters' conditions.
-Do not replace the whole conditions list. If a node changed since it was read or a patch conflicts, refetch and requeue the affected window to recompute its decision.
+Do not replace the whole conditions list. If a node changed since it was read or a patch fails, requeue its decision: refetch the node and current windows, reevaluate at the current time, and rebuild the global decision before another write. Never retry an old boolean after a schedule boundary.
 Repeated reconciles should write nothing when conditions and reasons match.
 Refresh heartbeat timestamps when due on conditions still owned by the controller. Heartbeat-only node changes will not cause another admission pass (they are filtered).
 
@@ -339,6 +343,21 @@ Each team owns a separate, non-overlapping group of nodes and runs one kumaco co
 for that group. The cluster administrator must keep the groups disjoint: two controllers
 writing the same node conditions would overwrite each other's decisions. Each controller
 has its own concurrency pool.
+
+#### Replicas of the same controller
+
+Replicas of the same named controller (managing the same windows and node group)
+share a leader-election Lease:
+only the leader reconciles and writes MaintenanceWindow status and node conditions.
+The leader processes window reconciliations sequentially. A new leader waits for its
+API view to sync, then reads the current managed nodes and windows, rebuilds both maps
+from those inputs, and sweeps node conditions before ordinary reconciliation; it does
+not inherit the previous leader's in-memory decisions. A replica stops writing when it
+loses leadership. Node write conflicts require refetching and recomputing, not replaying
+a stale decision. Leader election alone does not fence an in-flight write during a
+handover; the controller converges through conflict checks and reconciliation, not an
+atomic update of all nodes. Controllers for disjoint teams use separate Leases and
+can run at the same time.
 
 #### The harder approach: the service-account limitations
 
