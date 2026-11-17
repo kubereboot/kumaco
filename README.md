@@ -80,7 +80,7 @@ The MaintenanceWindow CRD's spec contains:
   [CRON_TZ=<IANA time zone> ]<second> <minute> <hour> <day of month> <month> <day of week> <year>
   ```
 
-  Without `CRON_TZ`, the time zone is UTC. All seven fields are required:
+  Without `CRON_TZ`, the time zone is UTC (see "Time zones"). All seven fields are required:
 
   | Field | Allowed values | Allowed special characters |
   |---|---|---|
@@ -179,7 +179,7 @@ rule; the controller marks a window `Invalid` when a rule needs more than the sc
 | Field | Rules | Checked by |
 |---|---|---|
 | `startTime` | Required, at most 256 characters. | CRD |
-| | Grammar (see `startTime` above), and a known time zone. | controller |
+| | Grammar (see `startTime` above), and a known time zone (see "Time zones"). | controller |
 | `duration` | Required. A Go duration string (for example `2h30m`), from `1m` to `744h` (31 days). | CRD |
 | `nodeSelector` | Required. A Kubernetes label selector; `{}` selects all managed nodes. | CRD |
 | `conditionType` | Required. A Kubernetes condition type: a qualified name, at most 316 characters. | CRD |
@@ -190,12 +190,6 @@ rule; the controller marks a window `Invalid` when a rule needs more than the sc
 | `stopTriggers` | Optional. At most 16 expressions of at most 4096 characters each. | CRD |
 | | Every expression compiles and returns a `bool` (see "CEL triggers"). | controller |
 | `concurrency` | Required. An integer from 0 to 1000. | CRD |
-
-Daylight saving time follows the configured timezone without special handling: if a
-scheduled local time does not exist when clocks move forward, that occurrence does not
-start; if a local time repeats when clocks move back, both occurrences start. Even a
-fixed-year schedule can therefore start twice on that date. Overlapping occurrences
-keep the window `InProgress` until the last one ends.
 
 The MaintenanceWindow CRD's status is a report: the controller writes it and never reads it
 back (what is under maintenance is recorded on the nodes). Its size does not depend on the number
@@ -265,6 +259,31 @@ Each evaluation of one expression on one node is limited to a CEL cost of 1,000,
 per-call limit Kubernetes uses for its own CEL features, roughly 0.1 seconds) and to
 100 milliseconds. Exceeding either limit is an error: the expression fails closed, and
 kumaco emits a `TriggerFailed` event. These limits are fixed; they are not configurable.
+
+#### Time zones
+
+`startTime` is evaluated in the time zone named by its `CRON_TZ` prefix, or in UTC without
+the prefix:
+- The name must be an [IANA time zone](https://www.iana.org/time-zones) name, such as
+  `Europe/Brussels` or `America/New_York`; `UTC` is accepted. An unknown name makes the window
+  `Invalid`, and so does `Local`: the time zone of the controller's container is not a
+  meaningful setting for a cluster-wide resource.
+- Daylight saving time follows the configured time zone without special handling: if a
+  scheduled local time does not exist when clocks move forward, that occurrence does not
+  start; if a local time repeats when clocks move back, both occurrences start. Even a
+  fixed-year schedule can therefore start twice on that date. Overlapping occurrences
+  keep the window `InProgress` until the last one ends.
+
+kumaco's container image is built `FROM scratch`, so it contains no system time zone
+database. kumaco embeds instead the database of the Go release it is built with (Go's
+`time/tzdata` package), and the notes of each kumaco release state that Go version. When a
+government changes the rules of a time zone, either:
+- upgrade kumaco to a release built with a Go version that includes the new rules; or
+- give kumaco a newer database without upgrading it: mount a zoneinfo directory, or an
+  uncompressed zip of it (like Go's `lib/time/zoneinfo.zip`), into the kumaco container, and
+  set its `ZONEINFO` environment variable to that path. kumaco then reads that database
+  instead of the embedded one. A ConfigMap can hold the zip file as `binaryData`, within the
+  1 MiB size limit of ConfigMaps.
 
 ### What does it reconcile, and when?
 

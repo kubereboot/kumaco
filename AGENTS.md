@@ -373,8 +373,9 @@ local tests and previews must not publish artifacts.
 
 Build images `FROM scratch` with a static (`CGO_ENABLED=0`) binary, running as a
 numeric non-root user. Anything the binary needs at runtime must then be
-embedded or mounted, not taken from a base image. A base image other than
-`scratch` needs maintainer approval and a documented reason.
+embedded or mounted, not taken from a base image (time zone data comes from the
+embedded `time/tzdata` package, see `README.md`, "Time zones"). A base image
+other than `scratch` needs maintainer approval and a documented reason.
 
 Ship the deployment as a Helm chart and as kustomize manifests. Generate both
 from the same `controller-gen` CRD and RBAC output so they cannot drift, and
@@ -392,7 +393,8 @@ follow later; do not add them before they are agreed.
   contract change.
 - Mark a breaking change with `!` in its commit title (`feat!: ...`). Release notes
   group changes by Conventional Commits type and list breaking changes first,
-  with migration notes.
+  with migration notes. They also state the Go version the release is built with,
+  which determines its embedded time zone database.
 - Only the latest release receives fixes; nothing is backported before v1.0.0.
   Each release supports the latest Kubernetes minor release only, as `README.md`
   ("Compatibility") documents.
