@@ -167,7 +167,8 @@ Keep determinism simple:
 Run the relevant `mise run` tasks locally before proposing an implementation
 change; do not rely on GitHub Actions to discover whether it works. Before merge,
 require clean formatting, `go vet`, unit tests, race tests, dependency-policy lint,
-cognitive-complexity lint, security/license checks, and compatibility/e2e suites.
+cognitive-complexity lint, security/license checks (Snyk is CI-only, see "Security
+and license scanning"), and compatibility/e2e suites.
 Agree on the complexity lint tool and threshold before introducing it; keep its
 configuration identical locally and in CI.
 
@@ -211,10 +212,15 @@ and imports introduced by generated code or tooling against the same rules.
 
 - Use Trivy for repository/configuration and container-image security scanning.
   Provide local mise tasks, and scan release candidate images before publication.
-- Use Snyk for dependency security and license scanning, through local CLI tasks
-  wherever supported. Document any authentication, service, plan, or feature
-  limitations. If a required capability cannot run locally, raise it with the
-  maintainer and agree on an alternative rather than silently omitting the check.
+- Use Snyk for dependency security and license scanning. It is an approved
+  exception to local-first checks: it needs a Snyk account token, so it runs only
+  in CI. Contributors are not required to run it locally. The `mise run
+  scan:snyk` task stays the single implementation and fails, rather than skips,
+  without `SNYK_TOKEN`. CI runs it only in trusted contexts (pushes to `main`,
+  scheduled runs, and release tags), never with the token on untrusted fork code.
+  Pull requests from forks therefore get no Snyk result before merge. A Snyk
+  failure on `main` blocks the next release until it is resolved or a documented
+  exception is approved.
 - GitHub Actions must invoke these same scan tasks, not provide the only scanning
   implementation. Missing credentials or scan failures must not masquerade as
   passing required checks. Agree on finding thresholds and documented exceptions
