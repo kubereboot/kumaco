@@ -22,6 +22,16 @@ with observed upstream behaviour, stop and ask rather than silently redefining i
   semantics, condition names and ownership, heartbeat contracts, CLI flags,
   compatibility guarantees, metrics (names, types, labels, and meaning), and Go
   packages' exported functions, variables, constants, types, and methods.
+- Until v1.0.0, metrics, the CRD API, and exported Go symbols carry no
+  compatibility guarantee and may change between releases. Such changes still
+  need maintainer approval and must be visible in the release notes (see
+  "Versioning and release policy").
+- Maintainers are the people listed for this project in
+  [maintainers.yaml](https://github.com/kubereboot/.project/blob/main/maintainers.yaml).
+  "Maintainer approval" means approval by one of them, given where it can be
+  referenced later (a PR review or an issue comment).
+- Changes to this file need human maintainer approval. An agent may propose them,
+  but must not treat its own proposal as agreed.
 
 ## TDD and atomic changes
 
