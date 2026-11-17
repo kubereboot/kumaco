@@ -3,7 +3,7 @@
 - [Introduction](#introduction)
 - [Behaviour](#behaviour)
   - [The personas](#the-personas)
-  - [The kuma.kured.dev MaintenanceWindow CRD](#the-kumakureddev-maintenancewindow-crd)
+  - [The kumaco.kured.dev MaintenanceWindow CRD](#the-kumacokureddev-maintenancewindow-crd)
   - [What does it reconcile, and when?](#what-does-it-reconcile-and-when)
   - [What does it look like on my node?](#what-does-it-look-like-on-my-node)
   - [Heartbeat contract](#heartbeat-contract)
@@ -25,7 +25,7 @@ This code is in early alpha.
 ## Introduction
 
 kumaco (KUbernetes MAintenance COntroller) is a kubernetes controller
-watching a "Maintenance" Custom Resource (declaring maintenance windows)
+watching a "MaintenanceWindow" Custom Resource (declaring maintenance windows)
 and sets nodes matching criteria under _maintenance_ (by applying the
 Kubernetes 1.37 standardized `MaintenanceInProgress` node condition, on the appropriate nodes).
 See [Kubernetes v1.37: Introducing Node Lifecycle Conditions](https://kubernetes.io/blog/2026/09/09/kubernetes-v1-37-node-lifecycle-conditions/).
@@ -44,7 +44,7 @@ In kured v2 architecture:
 - kumaco is the _brain of the orchestration_ 
 - [node-reboot-required-reporter](https://github.com/kubereboot/node-reboot-required-reporter) detects whether a reboot is required and mark the node as such (it is running on all nodes).
 - [reboot-inhibitors-reporter](https://github.com/kubereboot/reboot-inhibitors-reporter) detects whether a blocker pod is present on nodes or a prometheus alert is present (this is not running on all nodes)
-- [kured](https://github.com/kubereboot/kured) drains and restarts the nodes (it is running on all nodes, but with different privileges as node-reboot-required-reporter)
+- [kured](https://github.com/kubereboot/kured) drains and restarts the nodes when the condition of its kind of maintenance (see `conditionType`) is `True` (it is running on all nodes, but with different privileges as node-reboot-required-reporter)
 
 ## Behaviour
 
@@ -52,15 +52,15 @@ In kured v2 architecture:
 
 Two kind of people are involved in kumaco's deployment:
 - kumaco's deployer, who has admin rights on the cluster. It deploys the kumaco controller (CRD, deployment, service account, service)
-- kumaco's maintenance manager, who has administrative rights to put a node in/out of maintenance, but do not have access rights to nodes themselves.
+- kumaco's maintenance manager, who has administrative rights to put a node in/out of maintenance, but has at most read access to the nodes themselves.
 
-### The kuma.kured.dev MaintenanceWindow CRD
+### The kumaco.kured.dev MaintenanceWindow CRD
 
 A CRD allow us to:
 - Validate input easily like any config map would
 - Report the state of the MaintenanceWindow (`InProgress`, `Scheduled`, `Closed`, `Invalid`)
-- Use RBAC to grant access to different people (a "maintenance manager" might have access to define the conditions/timing of a maintenance window, but might not have access to the node)
-- Let people define their own admission events.
+- Use RBAC to grant access to different people (a "maintenance manager" might have access to define the conditions/timing of a maintenance window, but might not have write access to the node)
+- Let people define their own conditions to start a maintenance.
 
 The MaintenanceWindow CRD's spec contains:
 - `startTime`: a cron-like string.
@@ -69,8 +69,8 @@ The MaintenanceWindow CRD's spec contains:
   - seven Quartz-style fields: second, minute, hour, day of month, month, day of week, year.
   
   For example,
-  `CRON_TZ=Europe/Berlin 0 0 2 1 1 ? 2027` starts once at 02:00 Berlin time on 2027-01-01;
-  `CRON_TZ=Europe/Berlin 0 0 2 * * ? *` starts daily at 02:00 local time.
+  `CRON_TZ=Europe/Brussels 0 0 2 1 1 ? 2027` starts once at 02:00 Brussels time on 2027-01-01;
+  `CRON_TZ=Europe/Brussels 0 0 2 * * ? *` starts daily at 02:00 local time.
 
   The timezone prefix plus year-aware fields is kumaco's defined input format, not a
   universally standardized cron expression. No common cron library parses it, so kumaco
@@ -78,37 +78,55 @@ The MaintenanceWindow CRD's spec contains:
   `[start, start+duration)`, it must also find the latest occurrence at or before `now`
   (all of them, if occurrences overlap), not only the next one.
 
-- `duration` (duration): maximum real elapsed time for a maintenance window. In other words: a maintenance window is active if between [startTime, startTime+duration]
+- `duration` (duration): maximum real elapsed time for a maintenance window. In other words: a maintenance window is active if between `[startTime, startTime+duration)`
 - `nodeSelector` (kubernetes labelSelector): the nodes on which the maintenance window is applied to.
-- `startTriggers` (list): A list of CEL expressions that need to ALL apply to **admit** a node into maintenance.
-  They are only evaluated for nodes that are not yet under maintenance in this window.
+  A node under maintenance that stops matching the selector is no longer kept by this window, as if a `stopTriggers` expression had matched.
+- `conditionType` (string): the kind of maintenance this window does, as a node condition type
+  (for example `kumaco.kured.dev/RebootInProgress`). The condition is `True` on a node exactly
+  while that kind of maintenance is in progress on it, and absent otherwise. It is kumaco's
+  only record of that fact (see "The node is the record").
+  A consumer doing disruptive work (kured, a firmware updater, ...) must act on
+  the condition of its own kind, not on `MaintenanceInProgress`: the latter only says that
+  some maintenance is in progress on the node, not which kind, nor that this consumer's
+  triggers and concurrency were checked.
+  Several windows can have the same `conditionType` (weekdays and weekend windows for
+  reboots, for example). They are then windows _of the same kind_: they work on the same
+  records, and the consumer watches a single condition type, whatever the number of windows.
+  Use one type per kind of maintenance, not one per window.
+  The type must start with the controller's reserved prefix
+  (`kumaco.kured.dev/` by default, configurable per controller), which is enforced by the
+  controller (otherwise the window is `Invalid`), and by CRD validation for the default prefix. Without this, a
+  maintenance manager, who has no node write access, could make the controller write or delete
+  conditions owned by others (`Ready`, `detectors.kured.dev/RebootRequired`, ...).
+  The reserved prefix also lets the controller recognise its own conditions (see startup).
+- `startTriggers` (list): A list of CEL expressions that need to ALL apply to **start** maintenance on a node.
+  They are only evaluated for nodes that are not yet under this kind of maintenance.
   Triggers (start and stop) can read the node's name, labels, annotations, spec (including whether it is cordoned via `node.spec.unschedulable`), and `node.status.conditions`. Other node status fields are not available to CEL.
   Expressions are compiled when the window is validated (a compile error makes the window
   `Invalid`) and run with a cost limit and an evaluation timeout. An expression that errors or
-  times out for a node counts as not matching (`UnmetTrigger`) and emits an event.
-- `stopTriggers` (optional, list): CEL expressions, of which ANY applying **releases** a node already
-  under maintenance in this window, which frees its concurrency slot. Admission conditions are
+  times out for a node emits an event and fails closed, meaning it never changes whether the node is under maintenance:
+  - in `startTriggers`, maintenance does not start on the node (`UnmetTrigger`);
+  - in `stopTriggers`, for a node not yet under maintenance, maintenance does not start on the node (`UnmetTrigger`);
+  - in `stopTriggers`, for a node already under maintenance, that expression does not release the node.
+- `stopTriggers` (optional, list): CEL expressions, of which ANY applying makes this window stop
+  keeping a node under maintenance. The node is then **released**, which frees its concurrency
+  slot, unless another window of the same kind still keeps it. Start conditions are
   often not release conditions: a node should not lose its maintenance because a blocker
   appeared after the drain started, but it must leave as soon as its reason disappears
   (for kured, `RebootRequired` is no longer `True`).
   Without `stopTriggers`, no node condition ever releases a node: it stays under maintenance until
-  the window stops being `InProgress` (its `duration` elapsed), when all its nodes are released.
-  A node whose `stopTriggers` match is not admitted either, so it cannot be released and
-  re-admitted in a loop.
-- `concurrency` (int): the maximum number of distinct nodes admitted for this maintenance window.
-  A node already counted in another maintenance window might be reused for two maintenance at the same time (depends on their triggers). See concurrency conflicts below.
-  There is no cluster-wide cap across windows: each window enforces its own `concurrency`.
-  Lowering `concurrency` never evicts nodes already under maintenance in this window: it only
-  prevents new admissions until the count falls below the new value;
-- `extraConditionType` (optional, string): an extra node condition owned by this window,
-  set when its node goes into or leaves maintenance. This can distinguish overlapping
-  maintenance. Windows that can select the same node need different extra condition
-  types for separate results. The type must start with the controller's reserved prefix
-  (`kumaco.kured.dev/` by default, configurable per controller), which is enforced by CRD
-  validation and again by the controller (otherwise the window is `Invalid`). Without this, a
-  maintenance manager, who has no node access, could make the controller write or delete
-  conditions owned by others (`Ready`, `detector.kured.dev/RebootRequired`, ...).
-  The reserved prefix also lets the controller recognise its own conditions (see startup).
+  the window stops being `InProgress` (its `duration` elapsed).
+  A node whose `stopTriggers` match does not start maintenance either, so it cannot be released and
+  started again in a loop.
+- `concurrency` (int): the maximum number of nodes, among the nodes this window selects, under
+  this window's kind of maintenance at the same time. Nodes started by another window of the
+  same kind count too: two reboot windows with `concurrency: 1` on the same nodes reboot one
+  node at a time, not two.
+  Windows of different kinds do not count each other's nodes, and there is no cluster-wide
+  cap across kinds. A node can be under several kinds of maintenance at the same time
+  (depends on the triggers). See concurrency conflicts below.
+  Lowering `concurrency` never releases nodes already under maintenance: it only
+  prevents new starts until the count falls below the new value.
 
 Daylight saving time follows the configured timezone without special handling: if a
 scheduled local time does not exist when clocks move forward, that occurrence does not
@@ -116,7 +134,9 @@ start; if a local time repeats when clocks move back, both occurrences start. Ev
 fixed-year schedule can therefore start twice on that date. Overlapping occurrences
 keep the window `InProgress` until the last one ends.
 
-The MaintenanceWindow CRD's status contains:
+The MaintenanceWindow CRD's status is a report: the controller writes it and never reads it
+back (what is under maintenance is recorded on the nodes). Its size does not depend on the number
+of nodes. It contains:
 - `state` (enum): This is a summarized result, determined based on spec and conditions.
   State is a practical way for users to check the overall state,
   rather than checking all the conditions independently.
@@ -126,18 +146,18 @@ The MaintenanceWindow CRD's status contains:
   - `Scheduled`: no occurrence is active, but a future occurrence exists.
   - `Closed`: no occurrence is active and no future occurrence exists (including a one-off
     window whose duration has elapsed).
-  - `Invalid`: the input of the CRD is incorrect, or the window selects more nodes than the configured limit.
-- `nodeStates` (map): each node's decision for this window, including nodes outside its schedule.
-  Keys are node names.
-  values are:
-  `UnderMaintenance`
-  `UnmetTrigger`
-  `MaxConcurrencyReached`
-  `Unknown` (means evaluation has not completed. It never authorizes maintenance)
-  `SelectorMismatch`
-  `PastMaintenanceWindow`
-  `FutureMaintenanceWindow`
-  `InvalidMaintenanceWindow`
+  - `Invalid`: the input of the CRD is incorrect (unparsable schedule, CEL compile error,
+    `conditionType` without the reserved prefix).
+    An `Invalid` window starts no maintenance and keeps no node under maintenance.
+- `nodesUnderMaintenance` (list): the names of the nodes this window selects that are under its
+  kind of maintenance. It stays small: it is bounded by the highest `concurrency` of the windows of that kind.
+- `matchingNodes` (int): the number of managed nodes matching `nodeSelector`.
+- `nodeCounts` (map): while the window is `InProgress`, how many of the matching nodes are in each situation:
+  - `UnderMaintenance`: under this window's kind of maintenance;
+  - `UnmetTrigger`: the triggers do not allow maintenance to start;
+  - `MaxConcurrencyReached`: the triggers allow it, but no slot is free.
+
+The situation of one particular node is not in the window's status but on the node itself: see "Debugging".
 
 ### What does it reconcile, and when?
 
@@ -165,6 +185,12 @@ If a fact from another node status field should affect maintenance, its reporter
 publish it as a node condition, for example with node-problem-detector. CEL triggers
 then read that condition rather than the original status field.
 
+kumaco's own condition writes do not requeue anything through node events. Instead, when a
+reconcile starts or releases a node, the controller enqueues the other
+windows selecting that node, so that a trigger reading `MaintenanceInProgress` (or the
+condition of another kind) is reevaluated. The controller reads back its own writes before
+reconciling again (see "Reading its own writes"), so triggers see the latest decisions.
+
 ### What does it look like on my node?
 
 Most of the time:
@@ -172,25 +198,51 @@ Most of the time:
 ```
 type: `MaintenanceInProgress`
 status: False
-reason: KumaNotFound
-message: "No maintenance window currently authorizes this node"
+reason: KumacoNoMaintenance
+message: "No maintenance in progress."
 lastTransitionTime: <time the condition became False>
 lastHeartbeatTime: <recent time showing controller liveness>
 ```
 
-The precise reason a window did not authorize this node is in that window's
-`status.nodeStates`, not in this global condition.
+While a window selecting the node is `InProgress`, but has not started maintenance on it,
+the message says why:
 
-During a maintenance:
+```
+type: `MaintenanceInProgress`
+status: False
+reason: KumacoNoMaintenance
+message: "No maintenance in progress. Not started: reboots-weekdays (MaxConcurrencyReached)"
+```
+
+During a maintenance, the node has the generic condition and the condition of the kind of
+maintenance (the window's `conditionType`):
 
 ```
 type: `MaintenanceInProgress`
 status: True
-reason: KumaInProgress
-message: "An active maintenance window selecting this node exists"
+reason: KumacoMaintenanceRunning
+message: "In progress: kumaco.kured.dev/RebootInProgress. Not started: firmware-q4 (UnmetTrigger)"
 lastTransitionTime: <time the condition became True>
 lastHeartbeatTime: <recent time showing controller liveness>
 ```
+
+```
+type: `kumaco.kured.dev/RebootInProgress`
+status: True
+reason: KumacoMaintenanceRunning
+message: "Started by MaintenanceWindow reboots-weekdays"
+lastTransitionTime: <time this kind of maintenance started on the node>
+lastHeartbeatTime: <recent time showing controller liveness>
+```
+
+`MaintenanceInProgress` is a generic signal: some maintenance is in progress on this node.
+Consumers doing disruptive work act on the condition of their own kind (kured, for example,
+only reboots on `kumaco.kured.dev/RebootInProgress`). That condition is present only while
+that kind of maintenance is in progress.
+
+Messages are for humans: nothing parses them, kumaco included. The "Not started" part is
+refreshed with the next write to the node, at the latest the next heartbeat, so it can be
+one heartbeat interval late.
 
 ### Heartbeat contract
 
@@ -205,177 +257,207 @@ one, because a dead controller leaves `True` in place forever.
 
 ### How does it work?
 
-#### Data structure
+#### The node is the record
 
 A controller only manages the nodes matching its node scope (`--node-selector`, a label
 selector; the default, all nodes, is only safe with a single controller). Window selectors
 are evaluated within this scope. "Managed nodes" below always means this set. A node leaving
 the scope keeps its last conditions: clear them before relabeling it.
 
-We mostly rely on two global mutated maps with locks:
-- currentMaintenanceWindows
-- globalNodesUnderMaintenance
+kumaco stores nothing of its own. A window declares its kind of maintenance with
+`conditionType`. "Node N is under this kind of maintenance" is recorded in exactly one
+place: that condition is `True` on N. The condition's `lastTransitionTime` is the time
+this maintenance started on N.
 
-`currentMaintenanceWindows` maps each window name to a state for every managed node,
-using the same values as `status.nodeStates`.
-This per-window map is the source for each window's extra condition and status.
+The record belongs to the kind, not to one window: windows of the same kind work on the
+same records, whichever of them started the maintenance.
 
-`globalNodesUnderMaintenance` maps every managed node to `True` if any window has
-`UnderMaintenance` for it, or `False` otherwise.
-It is the only source for the shared `MaintenanceInProgress` condition.
-It is built from the `currentMaintenanceWindows` map (the per-window maps).
-The recommended pattern is to rebuild the `globalNodesUnderMaintenance` at
-each change of `currentMaintenanceWindows` map.
-Do not update it manually.
+Everything else is derived from these records, read through the informer cache:
+- the nodes under a kind of maintenance: the managed nodes carrying its condition;
+- a window's used concurrency: the number of those nodes among the nodes it selects;
+- `MaintenanceInProgress` on a node: `True` if at least one such condition is on it, `False` otherwise;
+- the window's `status`: a report of the above.
 
-#### Reconciliation process
+This is what lets the controller resume after a problem:
+- After a crash, a restart, or a leader change, there is nothing to rebuild or replay. The
+  records are in the API server, and the new process reads them like any other node data.
+- A deleted node takes its records with it. A node recreated with the same name has none.
+- A node write that fails leaves no record, so the next reconcile decides again from the
+  start, triggers included.
 
-Reminder: In this controller, all the nodes absent from `globalNodesUnderMaintenance`
-are considered as "in need of garbage collection".
+The controller may keep derived data in memory (indexes, metric values, the last situation
+of each node for the messages), as long as it can be dropped and recomputed at any time.
+No decision depends on it.
 
-This means we need to build a world view at container start (or on gaining leadership), to
-prevent the first reconcile to garbage collect all the nodes not matched by the "currently
-reconciling" maintenance window.
+#### One function, one write per node
 
-We block/queue the reconciles at this point.
-The step to rebuild the world view is to read all MaintenanceWindows
-and run the usual reconcile loop _without k8s writes_.
-For that, we need to load/evaluate all existing mw (with the same functions as usual
-reconcile).
+A single function computes the complete list of kumaco conditions a node must have.
+Its inputs are the node as seen in the cache, the existing windows, and the decisions of the
+reconcile in progress (none, for the sweep). It uses no other state:
 
-The replay must not forget which nodes are already under maintenance, otherwise admission
-would choose again from scratch and, with a low `concurrency`, could revoke nodes that are
-mid-maintenance in favour of others. So before evaluating each window, seed
-`currentMaintenanceWindows[mw.name][node]=UnderMaintenance` for every node listed as
-`UnderMaintenance` in that window's persisted `status.nodeStates`. Those nodes are then
-handled as "already in this window" (substep 3.2.1) and counted against its concurrency.
-`status.nodeStates` is written before node conditions (step 5 before step 6), so after a
-crash it is at least as recent as the nodes.
-Rebuild `globalNodesUnderMaintenance` as each window's decisions change so later
-windows can see earlier decisions when combining maintenance. Do not publish node
-conditions until all windows have been evaluated and the final global map is built.
+```
+desiredConditions(node, started, released):
+    kinds = kumaco condition types (reserved prefix) that are True on the node   # the records
+    kinds = kinds - types that no existing window has as conditionType           # leftovers
+    kinds = kinds - released + started                                           # decisions of this reconcile
 
-After this point, both `currentMaintenanceWindow` and `globalNodesUnderMaintenance`
-are considered "fresh" (though they might be already outdated), but the nodes
-have not been modified from the information we have:
-They need garbage collecting before the first reconcile! (as they might have
-outdated `MaintenanceInProgress`).
+    list = one condition per kind: status True, reason KumacoMaintenanceRunning
+    list += MaintenanceInProgress:
+              True  / KumacoMaintenanceRunning  if kinds is not empty
+              False / KumacoNoMaintenance    otherwise
+    return list
+```
 
-We therefore need one last step for startup: Update the nodes
-`MaintenanceInProgress` condition type. For all nodes, we use the
-`globalNodesUnderMaintenance[node]` as the boolean to flip the
-reason and status of the Condition. In case a transition happens, update the
-time of the transition too. (See section "What does it look like on my node?").
-The same pass removes every condition on managed nodes whose type starts with the reserved
-prefix but is not the `extraConditionType` of an existing window. This cleans up after
-windows deleted, or whose type changed, while kumaco was down.
+For example, with a reboot window and a firmware window:
 
-After this startup sequence, we can start reconciling
-each MaintenanceWindow separately in the controller.
+| Event | Result of `desiredConditions(node)` | Effect of the write |
+|---|---|---|
+| nothing in progress | `MaintenanceInProgress: False` | none (already there) |
+| the reboot window starts on the node | `RebootInProgress: True`, `MaintenanceInProgress: True` | one condition added, one flipped |
+| the firmware window starts on the node too | `RebootInProgress: True` (carried over), `FirmwareInProgress: True`, `MaintenanceInProgress: True` | one condition added |
+| the reboot `stopTriggers` match | `FirmwareInProgress: True`, `MaintenanceInProgress: True` | `RebootInProgress` removed |
+| the firmware window is deleted while kumaco is down | `MaintenanceInProgress: False` (no window has the type anymore) | `FirmwareInProgress` removed by the startup sweep |
+
+Every node write sends this complete list in one server-side apply on `nodes/status`, with
+the field manager `kumaco`. Never send a subset: server-side apply removes what a field
+manager stops sending. This is also the only cleanup mechanism: what is not in the list
+anymore (released node, deleted windows, changed `conditionType`) is removed by the same write.
+
+Only kumaco-owned condition types are sent, so other reporters' conditions are preserved and
+ownership is explicit. Never replace the whole conditions list.
+(Check that `NodeStatus.conditions` is a map-type list, keyed by `type`, in all supported Kubernetes versions;
+otherwise fall back to a strategic merge patch.)
+
+Rules for these writes:
+- `lastTransitionTime` is kept unless the `status` changes. A new condition gets the current time.
+- A write that starts maintenance on a node (a condition appears) sets
+  `metadata.resourceVersion` to the version the decision was based on, so a concurrent change
+  to the node (for example the reboot reporter) rejects the write. Nothing is recorded then,
+  and the window is requeued: its `startTriggers` are evaluated again on the fresh node.
+- Releases and heartbeats are applied without that precondition, as they are always safe.
+- A reconcile writes nothing when the node already has the desired types and statuses.
+  A difference in `message` alone does not cause a write: it goes with the next one.
+- Heartbeat timestamps are refreshed when due, in the same apply (see "Heartbeat contract").
+  Heartbeat-only node changes do not requeue windows (they are filtered).
+
+#### Reading its own writes
+
+The informer cache can lag behind the controller's own writes. Counting nodes
+from a cache that does not show the last start yet would exceed `concurrency`. So the
+controller does not reconcile a window until its cache shows all the node writes it made
+(the "expectations" pattern of the ReplicaSet controller).
+
+#### Startup and periodic sweep
+
+At container start, or on gaining leadership:
+1. Wait for the informer caches (nodes and windows) to sync.
+2. Sweep: for every managed node, compute `desiredConditions(node)` and apply it if it
+   differs. This removes the records whose type no window has anymore (windows deleted or
+   changed while kumaco was down), and sets `MaintenanceInProgress` where it is missing or outdated.
+   This first sweep does not refresh heartbeats.
+3. Reconcile every window once.
+4. Only then start refreshing heartbeats.
+
+The sweep does not evaluate schedules or triggers. Whether a record is still justified is
+decided by the windows' reconciles. This is why heartbeats wait for step 3: a record left
+over from before the downtime must not look fresh to consumers before it has been checked.
+
+The same sweep then runs at every heartbeat interval. It refreshes heartbeats and messages,
+and gives `MaintenanceInProgress: False` to new nodes that no window selects.
+
+#### When does a window keep a node under maintenance?
+
+A window _keeps_ a node that is under its kind of maintenance when all of these are true:
+- the window is `InProgress`;
+- the node matches its `nodeSelector`;
+- the record is not older than the start of the window's current occurrence;
+- NONE of its `stopTriggers` matches (an expression that errors does not match).
+
+A node is **released** (its record is removed) when no window of that kind keeps it.
+
+The third rule is about records that outlived their occurrence. Example: a daily window from
+02:00 to 04:00. On Monday at 02:10, maintenance starts on node A. The controller dies at 03:00
+and only comes back on Tuesday at 02:05. Nobody removed A's record on Monday at 04:00, so A
+still carries it, and Tuesday's occurrence is now in progress. Without this rule, A would just
+stay under maintenance, although Tuesday's `startTriggers` were never evaluated for it. With
+this rule, the record (Monday 02:10) is older than the current occurrence (Tuesday 02:00):
+A is released, and is a normal candidate again.
+
+No special requeue is needed for this. Requeues at schedule boundaries are in-memory timers,
+so Monday's 04:00 one died with the controller. On Tuesday, the startup reconciles every
+window once (step 3 of the startup), and the rule is checked there, as in every reconcile.
+A stale heartbeat is deliberately not used for this: it would also release nodes after a short
+outage inside the same occurrence, in the middle of their maintenance.
+
+If occurrences of a window overlap (its `duration` is longer than the time between two
+starts), its "current occurrence" starts at the earliest occurrence of the overlapping chain.
+
+A consequence for windows of the same kind: when a window ends, the nodes it started are only
+kept by another window if they started during that other window's current occurrence.
+Otherwise they are released, and can start again right away if its `startTriggers` match.
+
+#### Reconciling a window
+
+Windows are reconciled one at a time. The current time is read once, at the start of the reconcile.
 
 Case 1: Deletion of a maintenance window.
-When a maintenance window is observed as deleted:
-1. extract all node names from the mw;
-2. delete that mw window's map in `currentMaintenanceWindow` and rebuild the global map as usual
-3. loop over the extracted node names. For any node which now is transitioning state
-   (based on a check in `globalNodesUnderMaintenance`), update the k8s Condition
-   `MaintenanceInProgress`.
+Run the second step (release) for its kind, then the fifth step. If it was the last window
+of its kind, `desiredConditions` drops the records of that kind.
 
-Case 2: Every other maintenance window change.
-Run a k8s request, get all nodes. I will call this copied list "pristineListOfNodes".
-First step - Select nodes:
-- Read mw.nodeSelector, use it to run a k8s request (or alternatively, copy the pristineListOfNodes and filter on that list): get all nodes matching the selector. I will call the list of nodes "nodesToProcess" further down.
-- If `mw.extraConditionType` has changed, record all nodes which need cleaning + the condition to remove
-Any unknown node (=not present in globalNodesUnderMaintenance) needs adding as `currentMaintenanceWindows[mw.name][nodename]=Unknown`.
-Then, any node not matching should be updated to `currentMaintenanceWindow[mw.name][nodename]=SelectorMismatch` 
-Regenerate the globalNodesUnderMaintenance map if a change happened.
-If # of nodes matching exceeds limits, set mw.status.state Invalid and emit an event. Nodes already
-`UnderMaintenance` in this window keep that state (in-flight maintenance is never revoked); every other
-node is `InvalidMaintenanceWindow`, so nothing new is admitted. Existing members are still released
-under the usual rules (schedule, `stopTriggers`) in steps 2-3, but step 4 and new admissions are skipped.
-Only go over steps 2-3-4 for nodes that are NOT SelectorMismatch.
+Case 2: Every other event.
 
-Second step - Evaluate schedule:
+First step - Validate and evaluate the schedule:
+- The window is `Invalid` if its spec cannot be used (see `status.state`).
 - The window is `InProgress` if now is between an occurrence's start and its start plus `duration` (regardless of whether there is a future start)
 - The window is `Scheduled` if no occurrence is active and a next start > now exists
 - The window is `Closed` if no occurrence is active and no future start exists
-- The window is `Invalid` if we cannot parse the schedule.
-For the `Scheduled`, `Closed`, `Invalid` case: Read/Update `currentMaintenanceWindow` of all matching nodes (found in step 1) to respectively `FutureMaintenanceWindow`, `PastMaintenanceWindow`, and `InvalidMaintenanceWindow`.
-In case of change, regenerate the `globalNodesUnderMaintenance` map. Only go over steps 3-4 if `InProgress`.
-When the window is not `InProgress`, nodes of this window that were `UnderMaintenance` leave maintenance
-(their state becomes the one above).
- 
-Third step - Iterate over each node 
-Before next substeps, we sort the list of all "nodesToProcess" by the node's condition `MaintenanceInProgress`'s last Transition time if it exists.
-If not, by node age. More recent first. Ties are broken by node name so that the order is deterministic.
 
-Substep 3.1 - Set node triggers:
-If `currentMaintenanceWindows[mw.name][nodename]` is already `UnderMaintenance`, the node is released when ANY of
-`mw.stopTriggers` matches (no `stopTriggers`: it is kept, skip to substep 3.2.1).
-Otherwise, the node is admitted only if ALL `mw.startTriggers` match and NONE of `mw.stopTriggers` matches.
-In the releasing or not-admitted cases, Set `currentMaintenanceWindows[mw.name][nodename]=UnmetTrigger`
-(for a node that was `UnderMaintenance`, this frees its slot).
-Remove the node from the `nodesToProcess` list.
-Continue to next node at substep 3.1.
-In case of change, regenerate the `globalNodesUnderMaintenance` map.
+If the window is not `InProgress`, skip the third and fourth steps.
 
-Substep 3.2 - Combined mw checking.
-The current node, selected by the nodeSelector + matching ALL CEL mw.startTriggers (and no stopTriggers) + `InProgress`, might have _another maintenance window active_ for it.
-If a node is _already in another maintenance window_ and the user has decided to _not exclude it_ (this can be done with the help of triggers), we consider the user wants to _combine_ maintenance windows.
-Check whether any window's entry for this node is `UnderMaintenance` (read the `globalNodesUnderMaintenance[nodename]` boolean). It can be another maintenance window OR THIS ONE.
-If it is *not* the case, move to next node at substep 3.1, leaving the nodesToProcess untouched.
+Second step - Release:
+This step runs before any start, so that the slots it frees can be reused in the same reconcile.
+It goes over all the managed nodes carrying the window's `conditionType`, whichever window started them.
+A node is released unless at least one window of that kind keeps it (see above).
+`startTriggers` are never evaluated for a node already under this kind of maintenance.
 
-Substep 3.2.1 Check if node is already in this current mw by any chance
-Read `currentMaintenanceWindows[mw.name][nodename]`. If it is `UnderMaintenance`, leave it as is.
-Remove the node from the `nodesToProcess` list.
-Continue to next node at substep 3.1.
+Third step - Find the candidates:
+This step goes over the managed nodes matching `mw.nodeSelector` that are not under this kind of maintenance.
+A node is a candidate only if ALL `mw.startTriggers` match and NONE of `mw.stopTriggers` matches
+(an expression that errors makes the node not a candidate).
+The other nodes are counted as `UnmetTrigger`.
 
-Substep 3.2.2 _Can the node (already in a maintenance) be added to this maintenance window or does it exceed our cap of nodes for this maintenance window?_
-Extract the `currentlyProcessingNodesCount` value from `currentMaintenanceWindows[mw.name][*]==UnderMaintenance` (we already know you are NOT in it, thanks to 3.2.1)
-Extract the `mw.spec.concurrency`.
-If `currentlyProcessingCount` >= `spec.concurrency`,
-  set `currentMaintenanceWindows[mw.name][nodename]=`MaxConcurrencyReached` and regenerate the `globalNodesUnderMaintenance`.
-  Remove the node from the `nodesToProcess` list.
-  Continue with the next node at substep 3.1
+Fourth step - Fill the free slots:
+The number of free slots is `mw.spec.concurrency` minus the number of nodes matching `mw.nodeSelector`
+that are still under this kind of maintenance after the second step.
+If it is zero or less (`concurrency` was lowered), nothing starts and nothing is released.
 
-Else, add the new node to the mix:
-  Set `currentMaintenanceWindows[name][nodename]` to `UnderMaintenance` and regenerate the globalNodesUnderMaintenance.
-  Remove the node from the `nodesToProcess` list.
-  Continue to next node at substep 3.1.
+Candidates are ordered as follows:
+1. First the candidates already under another kind of maintenance (`MaintenanceInProgress` is `True`),
+   most recent `lastTransitionTime` first.
+   The user has decided to _not exclude them_ (this can be done with a `startTriggers` expression requiring
+   `MaintenanceInProgress` to not be `True`), so we consider the user wants to _combine_ maintenances
+   on the same node rather than take one more node out of service.
+2. Then the other candidates ("standalone"), oldest `MaintenanceInProgress` `lastTransitionTime` first:
+   the node that left maintenance the longest time ago goes first. Nodes without the condition
+   yet are ordered by creation time, older nodes first.
 
-Fourth step - Iterate over each node in reverse order.
-The remaining of the `nodesToProcess` are not part of any "combined" maintenance windows. We are talking about "Standalone" mw.
-We probably want to have _older nodes_ processed first.
-So we iterate over the list `nodesToProcess` in the _reverse order_.
-We know that the node cannot be already `UnderMaintenance`, or it would have been caught in substep 3.2.
+Ties are broken by node name so that the order is deterministic.
 
-Substep 4.1 - _Can the node (already in a maintenance) be added to this maintenance window or does it exceed our cap of nodes for this maintenance window?_
-This is the same question as 3.2.2, and we proceed _similarly to it_. Just continue at substep 4.1 instead of 3.1.
+Maintenance starts on the first candidates, up to the number of free slots. The remaining
+candidates are counted as `MaxConcurrencyReached`.
 
-No nodes should be left to process.
-The maintenance window data is ready.
+Fifth step - Write the nodes:
+For every node released or started, apply `desiredConditions(node)` (see "One function, one write per node").
+A start whose write is rejected is not a start: nothing is recorded, and the window is requeued.
 
-Fifth step - update the mw status.
-Update the MaintenanceWindow `status.nodeStates` (before any node write, see startup).
+Sixth step - Report:
+- Update the MaintenanceWindow status from what was actually written.
+- Remember each matching node's situation for its `MaintenanceInProgress` message.
+- Emit events (see "Debugging") and update the metrics.
+- Enqueue the other windows selecting the nodes released or started.
+- Requeue this window at its next schedule boundary.
 
-Sixth step - update all the nodes
-Loop over `pristineListOfNodes`.
-If node.Status.Conditions.["MaintenanceInProgress"].Status for the node != `globalNodesUnderMaintenance[nodename]`, update the node. This can happen upon entering or leaving the mw.
-If node.Status.Condition.[mw.spec.extraConditionType].Status for the node != `currentMaintenanceWindows[mw.name][nodename]==UnderMaintenance`, update the node. This can happen upon entering or leaving the mw.
-Move to next node.
-
-Warning: In 6th step, when I say update the node, I mean: use server-side apply on `nodes/status`
-with the field manager `kumaco`, sending only kumaco-owned condition types, so other reporters'
-conditions are preserved and ownership is explicit. Never replace the whole conditions list.
-(Check that `NodeStatus.conditions` is a map-type list, keyed by `type`, in all supported Kubernetes versions;
-otherwise fall back to a strategic merge patch.)
-A write that admits a node (`MaintenanceInProgress` going to `True`) sets `metadata.resourceVersion`
-to the version the decision was based on, so a concurrent change to the node (for example the
-reboot reporter) rejects the write. Releases and heartbeats are applied without that precondition,
-as they are always safe. If a write is rejected or fails, requeue its decision: refetch the node and current windows,
-reevaluate at the current time, and rebuild the global decision before another write. Never retry an old boolean after a schedule boundary.
-Repeated reconciles should write nothing when conditions and reasons match.
-Refresh heartbeat timestamps when due on conditions still owned by the controller (see "Heartbeat contract"). Heartbeat-only node changes will not cause another admission pass (they are filtered).
+A status update that fails is retried. It changes no decision, as the status is never read back.
 
 ### Handling MaintenanceWindow conflicts
 
@@ -387,7 +469,7 @@ In other words if you have two MaintenanceWindows A and B applied on all the nod
 A might be in state Closed/Scheduled
 B might be in state InProgress
 
---> All nodes will be considered for _under maintenance_.
+--> B alone decides: the nodes B starts (triggers, concurrency) are _under maintenance_. A's state does not prevent it.
 
 #### Triggering conflicts
 
@@ -416,9 +498,12 @@ No node has the resulting `MaintenanceInProgress` set to True.
 
 #### Concurrency conflicts
 
-As the update of the k8s only happen at the end of the reconcile, no concurrency conflicts should happen:
-- Each node has its own state in its own mw (including a MaxConcurrencyReached if necessary)
-- We reconcile across all nodes across all mw afterwards
+Windows are reconciled one at a time, and the controller reads back its own node writes
+before the next reconcile. A window therefore always counts nodes from up-to-date
+records, and no concurrency conflicts should happen:
+- Each window counts, among the nodes it selects, the nodes carrying its `conditionType`.
+- Windows of the same kind count the same records, so they never add up their `concurrency` on the same nodes.
+- A node under several kinds of maintenance uses one slot in each kind.
 
 ### Multi-tenancy while doing self-service is *not an afterthought*
 
@@ -436,9 +521,8 @@ Replicas of the same named controller (managing the same windows and node group)
 share a leader-election Lease:
 only the leader reconciles and writes MaintenanceWindow status and node conditions.
 The leader processes window reconciliations sequentially. A new leader waits for its
-API view to sync, then reads the current managed nodes and windows, rebuilds both maps
-from those inputs, and sweeps node conditions before ordinary reconciliation; it does
-not inherit the previous leader's in-memory decisions. A replica stops writing when it
+API view to sync, then runs the startup sweep before ordinary reconciliation. It needs
+nothing from the previous leader: what is under maintenance is recorded on the nodes. A replica stops writing when it
 loses leadership. Node write conflicts require refetching and recomputing, not replaying
 a stale decision. Leader election alone does not fence an in-flight write during a
 handover; the controller converges through conflict checks and reconciliation, not an
@@ -488,12 +572,12 @@ Basic configuration for kured is the following:
 
 1) Set the maintenance window time
 2) Set the nodeSelector
-3) Set the following CEL `startTriggers` (all must match to admit a node):
+3) Set the following CEL `startTriggers` (all must match to start maintenance on a node):
 
 ```cel
-node.status.conditions.exists(c, c.type == 'detector.kured.dev/RebootRequired' && c.status == 'True')
-node.status.conditions.exists(c, c.type == 'blockers.kured.dev/NoPodInhibitor' && c.status == 'True')
-node.status.conditions.exists(c, c.type == 'blockers.kured.dev/NoAlertInhibitor' && c.status == 'True')
+node.status.conditions.exists(c, c.type == 'detectors.kured.dev/RebootRequired' && c.status == 'True')
+node.status.conditions.exists(c, c.type == 'detectors.kured.dev/NoPodInhibitor' && c.status == 'True')
+node.status.conditions.exists(c, c.type == 'detectors.kured.dev/NoAlertInhibitor' && c.status == 'True')
 ```
 
 This example assumes you are running the blocker reporter, which publishes explicit `NoPodInhibitor` and
@@ -501,23 +585,37 @@ This example assumes you are running the blocker reporter, which publishes expli
 This component set the value to `True` only when it has checked and found no blocker.
 For these triggers, missing, `False`, and `Unknown` do not authorize maintenance.
 
-Also set this `stopTriggers`, so that kured nodes are released once the reboot is done:
+Also set this `stopTriggers`, so that kured nodes are released once the reboot is done and the node is back:
 
 ```cel
-!node.status.conditions.exists(c, c.type == 'detector.kured.dev/RebootRequired' && c.status == 'True')
+!node.status.conditions.exists(c, c.type == 'detectors.kured.dev/RebootRequired' && c.status == 'True') &&
+node.status.conditions.exists(c, c.type == 'Ready' && c.status == 'True')
 ```
 
 An inhibitor appearing after kured started draining is too late to matter: only `startTriggers` look
-at inhibitors, so it does not release the node. `RebootRequired` no longer being `True` (set to
-`False`, or removed) after the reboot releases the node and its concurrency slot. While the node reboots,
-the stale `True` keeps it under maintenance. Without this `stopTriggers`, the node would keep its
-slot until the window ends.
+at inhibitors, so it does not release the node. The node and its concurrency slot are released when
+`RebootRequired` is no longer `True` (set to `False`, or removed) and the node is `Ready` again.
+While the node reboots, the stale `RebootRequired`, then `Ready` not being `True`, keep it under
+maintenance. Without this `stopTriggers`, the node would keep its slot until the window ends.
+
+Cordoning is deliberately not part of this trigger. `Ready` is reported by the kubelet and does not
+change when a node is cordoned (only `node.spec.unschedulable` does). The same trigger therefore
+covers both cases:
+- a schedulable node, which kured cordons, drains, reboots and uncordons;
+- a node that was already cordoned before the maintenance, which kured reboots but leaves cordoned.
+
+4) Set `conditionType` to `kumaco.kured.dev/RebootInProgress` on **every** reboot window, and configure kured
+to act on that condition. However many reboot windows you define (weekdays, weekend, per node pool, ...),
+kured watches this single condition type, and their `concurrency` is not added up on the nodes they share.
+kured must not reboot on `MaintenanceInProgress` alone: another kind of maintenance (firmware, ...)
+can be in progress on the node without having checked kured's inhibitors or concurrency. The heartbeat contract
+applies to this condition too. kured only reads it: it needs no write access to `nodes/status`.
 
 Other triggers may explicitly match a missing or `Unknown` condition, for example:
 
 ```cel
-!node.status.conditions.exists(c, c.type == 'blockers.kured.dev/NoPodInhibitor')
-node.status.conditions.exists(c, c.type == 'blockers.kured.dev/NoPodInhibitor' && c.status == 'Unknown')
+!node.status.conditions.exists(c, c.type == 'detectors.kured.dev/NoPodInhibitor')
+node.status.conditions.exists(c, c.type == 'detectors.kured.dev/NoPodInhibitor' && c.status == 'Unknown')
 ```
 
 Each expression above matches only its stated case; it does not override the schedule,
@@ -536,12 +634,12 @@ They are complementary, because both only use node conditions:
   taint until the required conditions (CNI, storage, GPU driver, ... reported by node-problem-detector
   or a custom daemon) are `True`.
 
-Without coordination, kumaco frees the slot as soon as the reboot reason is gone, and may admit
+Without coordination, kumaco frees the slot as soon as the reboot reason is gone, and may start
 the next node while the previous one is not yet usable. To make kumaco wait, reuse the conditions
 the readiness rule requires in `stopTriggers`. A node then keeps its slot until it is really back:
 
 ```cel
-!node.status.conditions.exists(c, c.type == 'detector.kured.dev/RebootRequired' && c.status == 'True') &&
+!node.status.conditions.exists(c, c.type == 'detectors.kured.dev/RebootRequired' && c.status == 'True') &&
 node.status.conditions.exists(c, c.type == 'Ready' && c.status == 'True') &&
 node.status.conditions.exists(c, c.type == 'example.com/CNIReady' && c.status == 'True')
 ```
@@ -574,7 +672,7 @@ For example, if a plugin publishes the condition `firmware.example.com/UpdateReq
 node.status.conditions.exists(c, c.type == 'firmware.example.com/UpdateRequired' && c.status == 'True')
 ```
 
-Use it in `startTriggers` to admit the node, and its negation in `stopTriggers` to release the node
+Use it in `startTriggers` to start maintenance on the node, and its negation in `stopTriggers` to release the node
 once the check passes again.
 
 Things to keep in mind:
@@ -582,9 +680,10 @@ Things to keep in mind:
   `False` when healthy and `True` when the problem is present; a missing condition means "not checked yet",
   not "healthy". Pick the polarity your trigger needs, and do not rely on absence.
 - NPD writes conditions on `nodes/status` too. Condition types owned by NPD are not under kumaco's
-  reserved prefix; kumaco only writes `MaintenanceInProgress` and its own prefixed extra conditions.
+  reserved prefix; kumaco only writes `MaintenanceInProgress` and its own prefixed window conditions.
 - NPD stops updating conditions if it dies or cannot reach the API server. A stale `True` keeps
-  matching, so check the condition's heartbeat in the trigger if staleness matters.
+  matching, and triggers cannot detect it (CEL has no clock here, and heartbeat-only changes do not
+  requeue), so monitor NPD's liveness separately if staleness matters.
 - Kumaco's `MaintenanceInProgress` is itself consumed by NPD to tell an administrated node from
   an unexpected failure (see KEP-5683, "Node Problem Detector" story); NPD health conditions can still be
   `True` on a node under maintenance.
@@ -599,12 +698,14 @@ it can be used as _the brain of maintenances_.
 In the kured case, we wanted to have a source of truth to know if that node
 was in maintenance to _trigger the rest of the process_
 (Drain/Cordon/Reboot/Uncordon), which is done by another controller.
+That source of truth is the kured windows' condition (`kumaco.kured.dev/RebootInProgress`
+in the example above), not the generic `MaintenanceInProgress`.
 
 Kured requires kumaco to:
 - Check whether the node is in a maintenance windows (core feature of kumaco)
 - Check whether the node has other positively matching conditions (core feature of kumaco):
-  the node needs `detector.kured.dev/RebootRequired` set to `True` in order to start the Maintenance
-  (and set `MaintenanceInProgress`).
+  the node needs `detectors.kured.dev/RebootRequired` set to `True` in order to start the Maintenance
+  (and set `MaintenanceInProgress` and the window's condition).
 - Check that neither a pod nor an alert inhibits the reboot, using the positive conditions shown above.
   With these triggers, an absent or `Unknown` inhibitor report does not authorize maintenance.
   This is also a core feature of kumaco.
@@ -617,16 +718,16 @@ Those node changes requeue kumaco reconciliations, which is fine: a reconcile th
 
 ## Metrics
 
-Metrics report the same decisions as reconciliation. On startup, the controller rebuilds the two in-memory maps from the managed nodes and MaintenanceWindows before exporting their values.
+Metrics report the same decisions as reconciliation. They are derived from the records on the nodes, so they are correct again as soon as the caches are synced after a restart.
 
-Each controller exports, based on those maps:
+Each controller exports:
 
 - `kumaco_maintenance_window_active{window}`: gauge, 1 while that window's schedule is
   active, 0 otherwise.
-- `kumaco_maintenance_window_nodes{window}`: gauge, number of nodes in maintenance.
+- `kumaco_maintenance_window_nodes{window,state}`: gauge, number of matching nodes per situation
+  (same values as `status.nodeCounts`).
 - `kumaco_node_slot_occupied{node}`: gauge for each managed node, 1 if
   `MaintenanceInProgress` is `True`, 0 otherwise.
-  Reflects the content of `globalNodesUnderMaintenance`
 - `kumaco_maintenance_window_invalid{window}`: gauge, 1 while the window is `Invalid`.
 - `kumaco_reconcile_total{window,result}`: counter of reconciles (`result` is `ok` or `error`).
 - `kumaco_reconcile_duration_seconds`: histogram of reconcile duration.
@@ -637,40 +738,50 @@ Each controller exports, based on those maps:
 
 ## Gotchas
 
-A trigger depending on the condition this window changes can oscillate.
-For example, requiring MaintenanceInProgress to be absent causes it to alternate between True and False.
+A `stopTriggers` expression depending on a condition this window sets can oscillate.
+For example, releasing when `MaintenanceInProgress` is `True` releases the node right after its maintenance started, then starts it again.
+`startTriggers` cannot oscillate this way, because they are not evaluated for nodes already under this kind of maintenance:
+requiring `MaintenanceInProgress` to not be `True` is the way to refuse nodes under another kind of maintenance (see the fourth step).
 
-The user should not do that. We do not validate it. An administrator can use an admission rule to prohibit self-referential triggers; reading a condition set by a different window can be intentional.
+The user should not write self-referential `stopTriggers`. We do not validate it. An administrator can use an admission rule to prohibit them; reading the condition of a different kind of maintenance can be intentional.
 
-`status.nodeStates` is stored in a single Kubernetes object. Even with numeric values,
-node names and JSON overhead can exceed the API's object-size limit. Configure a
-maximum number of **managed** nodes per window at controller startup (via CLI or
-environment). If it is exceeded, mark the window `Invalid`, emit an event, and admit no new
-node. In-flight maintenance is never revoked: nodes already `UnderMaintenance` stay so until
-released normally, and the other nodes are `InvalidMaintenanceWindow`. Rather than
-silently truncating `status.nodeStates`, publish only its `UnderMaintenance` entries (bounded
-by `concurrency`, and needed to seed the state after a restart). This is the exception to
-publishing an entry for every managed node.
+When a window is deleted, the nodes it was keeping are released, unless another window of
+the same kind keeps them. If the deletion (or a `conditionType` change) happened while kumaco
+was down, the startup sweep and the first reconciles do the same. Consumers should
+apply the heartbeat contract to every kumaco condition, not only to `MaintenanceInProgress`.
 
-When a window is deleted, remove its map and recompute `MaintenanceInProgress` for all
-managed nodes, even if no windows remain, and remove the window's extra condition from
-the nodes. If the deletion (or an `extraConditionType` change) happened while kumaco was
-down, the startup sweep removes any condition carrying the reserved prefix that no existing
-window owns. Consumers should still apply the heartbeat contract to extra conditions.
+Do not create one `conditionType` per window: consumers would have to follow every new type.
+A type names a kind of maintenance (reboot, firmware, ...), shared by all its windows.
 
 ## Debugging with kumaco events
 
-kumaco displays actions in its logs, which are intended for the _kumaco deployer_, to debug the controller.
+"Why is my node not under maintenance?" is answered on the node, for the _maintenance manager_
+(who needs read access to nodes for this): the message of its `MaintenanceInProgress` condition
+lists the `InProgress` windows selecting the node that did not start, and why
+(`UnmetTrigger`, `MaxConcurrencyReached`). See "What does it look like on my node?".
+It costs no extra write: the message travels with the heartbeat.
+
+The window's `status.nodeCounts` (and the matching metric) tell how many nodes are in each situation.
+
+kumaco emits events on the MaintenanceWindow. They are only emitted when something changes,
+so their number follows `concurrency`, not the number of nodes:
+- maintenance started on a node;
+- a node was released, and why (stop trigger, selector, end of the window, invalid or deleted window);
+- a trigger expression errored or timed out for a node;
+- a start was rejected because the node changed concurrently.
+
+kumaco also displays actions in its logs, which are intended for the _kumaco deployer_, to debug the controller.
 
 ## Security and access rights
 
 Maintenance managers need permission to manage their team's MaintenanceWindows, not
-permission to write nodes. Each controller ServiceAccount needs to watch its windows,
+permission to write nodes. Read access to nodes is optional, but lets them see why a node is
+not under maintenance (see "Debugging"). Each controller ServiceAccount needs to watch its windows,
 read nodes, and update `nodes/status` for its team's nodes. RBAC can restrict writes to
 named nodes with `resourceNames`, but not to particular node condition types or to
 nodes matching a label. Grant only the node names that controller should manage; a
 compromised controller can change *any* status condition on those allowed nodes.
-Because maintenance managers choose `extraConditionType`, it must be restricted to the
+Because maintenance managers choose `conditionType`, it must be restricted to the
 controller's reserved prefix (`kumaco.kured.dev/` by default).
 
 ## Getting Help
