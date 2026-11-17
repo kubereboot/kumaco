@@ -11,6 +11,7 @@
   - [What does it reconcile, and when?](#what-does-it-reconcile-and-when)
   - [What does it look like on my node?](#what-does-it-look-like-on-my-node)
   - [Heartbeat contract](#heartbeat-contract)
+  - [Condition types and their owners](#condition-types-and-their-owners)
   - [How does it work?](#how-does-it-work)
   - [Handling MaintenanceWindow conflicts](#handling-maintenancewindow-conflicts)
   - [Multi-tenancy while doing self-service](#multi-tenancy-while-doing-self-service-is-not-an-afterthought)
@@ -258,6 +259,24 @@ one, because a dead controller leaves `True` in place forever.
   (15m by default) as **not authorizing new work**.
 - In-flight work is the consumer's decision. kured, for example, should finish a reboot it
   already started.
+
+### Condition types and their owners
+
+kumaco writes some node condition types, and its documentation relies on others. Each type
+has exactly one owner, which defines its name and meaning:
+
+| Condition type | Owner | Use by kumaco |
+|---|---|---|
+| `MaintenanceInProgress` | Kubernetes ([node lifecycle conditions](https://kubernetes.io/blog/2026/09/09/kubernetes-v1-37-node-lifecycle-conditions/)) | Written by kumaco. Kubernetes leaves setting and clearing it to the administrator, a role kumaco takes on. |
+| `kumaco.kured.dev/*`, for example `kumaco.kured.dev/RebootInProgress` | [kubereboot/kumaco](https://github.com/kubereboot/kumaco) (the reserved prefix) | Written by kumaco. `kumaco.kured.dev/RebootInProgress` is consumed by [kured](https://github.com/kubereboot/kured). |
+| `Ready` | Kubernetes (the kubelet) | Read by the documented triggers. |
+| `detectors.kured.dev/RebootRequired` | [kubereboot/node-reboot-required-reporter](https://github.com/kubereboot/node-reboot-required-reporter) | Read by the documented triggers. |
+| `detectors.kured.dev/NoPodInhibitor`, `detectors.kured.dev/NoAlertInhibitor` | [kubereboot/reboot-inhibitors-reporter](https://github.com/kubereboot/reboot-inhibitors-reporter) | Read by the documented triggers. |
+| `example.com/CNIReady`, `firmware.example.com/UpdateRequired` | Nobody: examples for the node readiness controller and node problem detector | None. |
+
+Changing the name or meaning of a type starts with an issue in its owner's repository. The
+owner's release, this documentation, and kumaco's e2e pins then change together, so that kumaco
+never documents or tests a condition its owner no longer publishes.
 
 ### How does it work?
 
