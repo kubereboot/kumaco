@@ -482,7 +482,9 @@ are available rather than inventing unsupported performance claims.
 Follow the README's cache-based reconciliation, targeted enqueueing, bounded
 reporting, and no-op-write rules. Avoid unnecessary full scans, API lists during
 reconciliation, API writes, event storms, and metric cardinality beyond the
-specified contract. Measure before adding optimization machinery.
+specified contract. Measure before adding optimization machinery. Validate the
+default API request rate (`--kube-api-qps`, `--kube-api-burst`) and the heartbeat
+sweep pacing documented in `README.md` with the scale benchmark.
 
 Keep contracts and package responsibilities clear so changes remain local. Do not
 prebuild extension points for hypothetical future requirements.

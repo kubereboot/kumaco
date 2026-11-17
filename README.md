@@ -376,6 +376,7 @@ one heartbeat interval late.
 one, because a dead controller leaves `True` in place forever.
 - The controller refreshes `lastHeartbeatTime` on every condition it owns when it is older
   than `--heartbeat-interval` (default 5m, with jitter), in the same patch as any other change.
+  The periodic sweep spreads these refreshes evenly over the interval (see "API request rate").
 - Consumers should treat a `True` condition whose heartbeat is older than 3 intervals
   (15m by default) as **not authorizing new work**.
 - In-flight work is the consumer's decision. kured, for example, should finish a reboot it
@@ -879,6 +880,8 @@ kumaco is configured with command-line flags:
 | `--window-label-selector` | empty (all windows) | Label selector of the MaintenanceWindows this controller reconciles (see "The softer approach: the window label selector"). |
 | `--condition-prefix` | `kumaco.kured.dev/` | Reserved prefix that every `conditionType` must start with. |
 | `--heartbeat-interval` | `5m` | See "Heartbeat contract". |
+| `--kube-api-qps` | `50` | Sustained rate of requests to the Kubernetes API, per second (see "API request rate"). |
+| `--kube-api-burst` | `100` | Maximum burst of requests to the Kubernetes API (see "API request rate"). |
 
 kumaco also keeps the standard flags of Kubebuilder-generated controllers, with their usual
 defaults:
@@ -890,6 +893,53 @@ defaults:
   `--zap-time-encoding` for logging.
 
 kumaco has no webhook, so it has none of the `--webhook-*` flags.
+
+### API request rate
+
+Heartbeats are kumaco's steady load on the API server: one node write per managed node per
+heartbeat interval. With 10,000 nodes and the default 5-minute interval, that is about 33
+writes per second, before any start or release. The periodic sweep spreads these writes evenly
+over the interval instead of sending them in a burst. The default request rate
+(`--kube-api-qps 50`, `--kube-api-burst 100`) leaves room for starts, releases, and status
+writes at that size. For larger clusters or shorter intervals, raise the rate accordingly: a
+sweep that cannot finish within the interval makes heartbeats look stale to consumers (see
+"Heartbeat contract").
+
+The API server also limits kumaco with [API Priority and Fairness](https://kubernetes.io/docs/concepts/cluster-administration/flow-control/).
+By default, requests from service accounts in `kube-system` match the
+`kube-system-service-accounts` FlowSchema (matching precedence 900): they get the
+`workload-high` priority level, but share a single flow with every other `kube-system`
+service account. Requests from service accounts in other namespaces fall into the
+`service-accounts` FlowSchema and the `workload-low` priority level. On large clusters, you can
+give kumaco its own flow at the `workload-high` priority level with a FlowSchema such as the
+following. Its matching precedence must be lower than 900 to take effect before
+`kube-system-service-accounts` (adjust the ServiceAccount name and namespace to your
+deployment):
+
+```yaml
+apiVersion: flowcontrol.apiserver.k8s.io/v1
+kind: FlowSchema
+metadata:
+  name: kumaco
+spec:
+  priorityLevelConfiguration:
+    name: workload-high
+  matchingPrecedence: 850
+  distinguisherMethod:
+    type: ByUser
+  rules:
+    - subjects:
+        - kind: ServiceAccount
+          serviceAccount:
+            name: kumaco
+            namespace: kube-system
+      resourceRules:
+        - verbs: ["*"]
+          apiGroups: ["", "kumaco.kured.dev", "coordination.k8s.io", "events.k8s.io"]
+          resources: ["*"]
+          clusterScope: true
+          namespaces: ["*"]
+```
 
 ## Compatibility
 
