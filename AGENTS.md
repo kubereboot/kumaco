@@ -168,13 +168,12 @@ Run the relevant `mise run` tasks locally before proposing an implementation
 change; do not rely on GitHub Actions to discover whether it works. Before merge,
 require clean formatting, `go vet`, unit tests, race tests, dependency-policy lint,
 cognitive-complexity lint, security/license checks (Snyk is CI-only, see "Security
-and license scanning"), and compatibility/e2e suites.
+and license scanning"), `generate:check`, and compatibility/e2e suites.
 Agree on the complexity lint tool and threshold before introducing it; keep its
 configuration identical locally and in CI.
 
 Add focused fuzz tests for parsers and scheduling inputs. Benchmarks and scale
-tests are required for performance-sensitive changes. Document the actual tasks
-as tooling is introduced; this file does not imply they already exist.
+tests are required for performance-sensitive changes.
 
 Required checks must not silently skip missing infrastructure or components. A
 missing prerequisite cannot produce a successful compatibility gate. Do not merge
@@ -196,6 +195,43 @@ an implementation change with required gates unavailable or failing.
   locally runnable does not necessarily mean offline.
 - These requested CLI tools are development infrastructure, not blanket exceptions
   for importing their libraries into the Go module.
+- Install every development binary through mise, including linters, code
+  generators (`controller-gen`), envtest binaries, `kind`, `kubectl`, `helm`,
+  scanners, and release tools. Prefer prebuilt binaries from the project's own
+  release artifacts, verified by checksums in the mise lockfile. Build from source
+  with mise's `go:` backend, pinned to an exact version, only when no such binary
+  exists. Do not install tools with ad-hoc `go install`, `curl | sh`, `tools.go`,
+  or the `tool` directive in `go.mod`.
+
+#### Standard tasks
+
+These task names are fixed, so contributors and CI converge on the same entry
+points. Add each task when its tooling lands; this list does not mean that they
+already exist.
+
+| Task | Purpose |
+|---|---|
+| `fmt` | Format the code in place. |
+| `lint` | Check formatting and run `go vet` and the other linters. |
+| `lint:deps` | Dependency-policy gate (modules, imports, exception reviews). |
+| `lint:complexity` | Cognitive-complexity gate. |
+| `generate` | Regenerate all generated code and manifests (`controller-gen` output: deepcopy, CRDs, RBAC). |
+| `generate:check` | Run `generate` and fail if the working tree changed. |
+| `test` | Unit tests. |
+| `test:race` | Unit tests with the race detector. |
+| `test:fuzz` | Fuzz tests, with a bounded fuzz time. |
+| `test:envtest` | envtest suite. |
+| `e2e` | Kind e2e suite (see "E2e"). |
+| `scan:trivy` | Trivy repository, configuration, and image scans. |
+| `scan:snyk` | Snyk dependency and license scan (CI only, see below). |
+| `release:check` | Validate the GoReleaser configuration. |
+| `release:snapshot` | Non-publishing snapshot release. |
+
+Generated code is committed. Run `mise run generate` in every commit that
+changes its inputs (API types, markers, configuration). `generate:check` is a
+required check, locally and in CI. Contributors can run it before every commit
+with the hook installed by `mise generate git-pre-commit --write --task
+generate:check`.
 
 ### Controller development
 
