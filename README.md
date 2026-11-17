@@ -11,6 +11,8 @@
   - [Handling MaintenanceWindow conflicts](#handling-maintenancewindow-conflicts)
   - [Multi-tenancy while doing self-service](#multi-tenancy-while-doing-self-service-is-not-an-afterthought)
   - [How kured relies on kumaco](#how-kured-relies-on-kumaco-and-how-to-configure-your-maintenance-window-for-kured)
+  - [Using kumaco with the node readiness controller](#using-kumaco-with-the-node-readiness-controller)
+  - [Using kumaco with node problem detector](#using-kumaco-with-node-problem-detector)
 - [Metrics](#metrics)
 - [Gotchas](#gotchas)
 - [Debugging](#debugging-with-kumaco-events)
@@ -522,6 +524,72 @@ Each expression above matches only its stated case; it does not override the sch
 selector, or other triggers. If a reporter publishes a condition only when blocked and
 removes it otherwise, absence cannot distinguish "safe" from "not checked yet". The
 positive `NoPodInhibitor` trigger above requires the reporter to report readiness.
+
+#### Using kumaco with the node readiness controller
+
+The [node readiness controller](https://github.com/kubernetes-sigs/node-readiness-controller)
+(a `NodeReadinessRule` lists the node conditions that must have a given status and keeps a taint,
+for example `NoSchedule`, on the selected nodes until they do) and kumaco do not talk to each other.
+They are complementary, because both only use node conditions:
+- kumaco decides **when a node may leave service** (maintenance window, concurrency).
+- the node readiness controller decides **when a node may take workloads again**, by keeping its
+  taint until the required conditions (CNI, storage, GPU driver, ... reported by node-problem-detector
+  or a custom daemon) are `True`.
+
+Without coordination, kumaco frees the slot as soon as the reboot reason is gone, and may admit
+the next node while the previous one is not yet usable. To make kumaco wait, reuse the conditions
+the readiness rule requires in `stopTriggers`. A node then keeps its slot until it is really back:
+
+```cel
+!node.status.conditions.exists(c, c.type == 'detector.kured.dev/RebootRequired' && c.status == 'True') &&
+node.status.conditions.exists(c, c.type == 'Ready' && c.status == 'True') &&
+node.status.conditions.exists(c, c.type == 'example.com/CNIReady' && c.status == 'True')
+```
+
+If the node never becomes ready, it holds its slot (and so stops the rollout) until the window ends:
+this is intended, `concurrency` bounds the damage and the window `duration` bounds the wait.
+Also add `Ready` and the same required conditions to `startTriggers` if you do not want to
+start maintenance on a node that is already unhealthy.
+
+Use the readiness rule's continuous enforcement mode, not `bootstrap-only`: a rebooted node is no longer
+bootstrapping, and `bootstrap-only` stops re-evaluating the node once it has been ready.
+This is a usage pattern, not an integration documented by the node readiness controller;
+check the rule's fields against its current API version (it is `v1alpha1`).
+
+This integration is not in the e2e test yet, please feel free to contribute.
+
+#### Using kumaco with node problem detector
+
+[Node problem detector](https://github.com/kubernetes/node-problem-detector) (NPD) is the usual
+reporter for facts that are not in `node.status` fields CEL can read: kumaco triggers only see
+node conditions, labels, annotations and spec (see the CRD section). NPD publishes permanent
+problems as node conditions (temporary ones are only events, which kumaco cannot read), and its
+custom plugin monitor runs your own check script and maps its result to a condition. So any
+"this node needs maintenance" signal (pending security patches, outdated firmware, a degraded
+disk, ...) becomes a trigger once a custom plugin reports it as a condition.
+
+For example, if a plugin publishes the condition `firmware.example.com/UpdateRequired`:
+
+```cel
+node.status.conditions.exists(c, c.type == 'firmware.example.com/UpdateRequired' && c.status == 'True')
+```
+
+Use it in `startTriggers` to admit the node, and its negation in `stopTriggers` to release the node
+once the check passes again.
+
+Things to keep in mind:
+- Report readiness explicitly, as with the kured blocker reporter. NPD's default conditions are
+  `False` when healthy and `True` when the problem is present; a missing condition means "not checked yet",
+  not "healthy". Pick the polarity your trigger needs, and do not rely on absence.
+- NPD writes conditions on `nodes/status` too. Condition types owned by NPD are not under kumaco's
+  reserved prefix; kumaco only writes `MaintenanceInProgress` and its own prefixed extra conditions.
+- NPD stops updating conditions if it dies or cannot reach the API server. A stale `True` keeps
+  matching, so check the condition's heartbeat in the trigger if staleness matters.
+- Kumaco's `MaintenanceInProgress` is itself consumed by NPD to tell an administrated node from
+  an unexpected failure (see KEP-5683, "Node Problem Detector" story); NPD health conditions can still be
+  `True` on a node under maintenance.
+
+This integration is not in the e2e test yet, please feel free to contribute.
 
 #### Explanation of interconnection with kured
 
