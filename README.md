@@ -147,7 +147,7 @@ The MaintenanceWindow CRD's spec contains:
   They are only evaluated for nodes that are not yet under this kind of maintenance.
   Triggers (start and stop) can read the node's name, labels, annotations, spec (including whether it is cordoned via `node.spec.unschedulable`), and `node.status.conditions`. Other node status fields are not available to CEL.
   Expressions are compiled when the window is validated (a compile error makes the window
-  `Invalid`) and run with a cost limit and an evaluation timeout. An expression that errors or
+  `Invalid`) and run with a cost limit and an evaluation timeout (see "CEL triggers"). An expression that errors or
   times out for a node emits an event and fails closed, meaning it never changes whether the node is under maintenance:
   - in `startTriggers`, maintenance does not start on the node (`UnmetTrigger`);
   - in `stopTriggers`, for a node not yet under maintenance, maintenance does not start on the node (`UnmetTrigger`);
@@ -186,9 +186,9 @@ rule; the controller marks a window `Invalid` when a rule needs more than the sc
 | | Starts with the default prefix `kumaco.kured.dev/`. | CRD |
 | | Starts with the controller's `--condition-prefix`, when it is not the default. | controller |
 | `startTriggers` | At most 16 expressions of at most 4096 characters each. An empty list is allowed: the schedule and `concurrency` alone then decide. | CRD |
-| | Every expression compiles. | controller |
+| | Every expression compiles and returns a `bool` (see "CEL triggers"). | controller |
 | `stopTriggers` | Optional. At most 16 expressions of at most 4096 characters each. | CRD |
-| | Every expression compiles. | controller |
+| | Every expression compiles and returns a `bool` (see "CEL triggers"). | controller |
 | `concurrency` | Required. An integer from 0 to 1000. | CRD |
 
 Daylight saving time follows the configured timezone without special handling: if a
@@ -235,6 +235,36 @@ window, so that node changes across a large cluster do not cause a write storm. 
 the nodes by up to 10 seconds; it changes no decision, as it is never read back.
 
 The situation of one particular node is not in the window's status but on the node itself: see "Debugging".
+
+#### CEL triggers
+
+`startTriggers` and `stopTriggers` are [CEL](https://cel.dev) expressions that must return a
+`bool`. They use the same CEL environment as Kubernetes' own CEL features (CRD validation
+rules, ValidatingAdmissionPolicy), in the version of the Kubernetes libraries kumaco is built
+with: the standard CEL functions, plus Kubernetes' libraries for strings, lists, sets, regular
+expressions, URLs, quantities, IP addresses and CIDRs, semantic versions, formats, optional
+types, and two-variable comprehensions. The authorization functions are not usable: kumaco
+binds no `authorizer`, so calling them is an error.
+
+An expression sees a single variable, `node`, holding a reduced copy of the node:
+
+| Field | Content |
+|---|---|
+| `node.metadata.name` | The node's name. |
+| `node.metadata.labels` | The node's labels; an empty map if it has none. |
+| `node.metadata.annotations` | The node's annotations; an empty map if it has none. |
+| `node.spec` | The node's spec, as the API returns it. `node.spec.unschedulable` is always set: `false` when the node is schedulable. |
+| `node.status.conditions` | The node's conditions (`type`, `status`, `reason`, `message`, and the timestamps as RFC 3339 strings); an empty list if it has none. |
+
+kumaco always sets the fields listed above, so expressions can read them directly. Other
+fields of `node.spec` (`taints`, `podCIDR`, ...) are absent when the API omits them: test them
+with `has()` first, for example `has(node.spec.taints) && ...`. Reading an absent field is an
+error, and an error fails closed (see `startTriggers`).
+
+Each evaluation of one expression on one node is limited to a CEL cost of 1,000,000 (the
+per-call limit Kubernetes uses for its own CEL features, roughly 0.1 seconds) and to
+100 milliseconds. Exceeding either limit is an error: the expression fails closed, and
+kumaco emits a `TriggerFailed` event. These limits are fixed; they are not configurable.
 
 ### What does it reconcile, and when?
 

@@ -165,12 +165,10 @@ exceptions in a machine-readable allowlist consumed by the lint gate, recording:
 
 Review each exception at least annually; its next review is due no later than one
 year after approval or the previous review. Remove exceptions when no longer needed.
-CEL is an anticipated exception, not blanket permission for unspecified modules:
-record and approve its concrete dependency scope before adding it.
-
 A package on an allowed host that wraps a non-allowed module also needs an
 exception, and the lint gate must reject it without one. The lint gate keeps a
-list of such packages, starting with `sigs.k8s.io/controller-runtime/pkg/log/zap`.
+list of such packages, starting with `sigs.k8s.io/controller-runtime/pkg/log/zap`
+and `k8s.io/apiserver/pkg/cel/...`.
 
 #### Approved exceptions
 
@@ -186,6 +184,19 @@ here. Move them into the allowlist when the lint gate lands.
     controller-runtime documents. A standard-library `log/slog` backend would
     work, but keeping the default keeps the generated code standard, which makes
     long-term maintenance and scaffold upgrades simpler.
+  - Approval: approved by maintainer evrardjp on 2026-11-17; the reference is the
+    review of the change that adds this entry. Reviewed 2026-11-17, next review due
+    2027-11-17.
+- **`github.com/google/cel-go`**, packages `cel` and `common/types`, and the
+  Kubernetes packages that wrap it, `k8s.io/apiserver/pkg/cel/...`.
+  - Scope: production and tests, to compile and evaluate the CEL triggers
+    described in `README.md` ("CEL triggers"). Other `cel-go` packages stay
+    forbidden.
+  - Reason: `k8s.io/apiserver/pkg/cel/environment` provides Kubernetes' CEL
+    environment and libraries, so triggers behave like Kubernetes' own CEL
+    features, but declaring the `node` variable and setting the cost limit need
+    `cel-go`'s API (`cel.EnvOption`, program options, result values). The
+    standard library has no CEL implementation.
   - Approval: approved by maintainer evrardjp on 2026-11-17; the reference is the
     review of the change that adds this entry. Reviewed 2026-11-17, next review due
     2027-11-17.
