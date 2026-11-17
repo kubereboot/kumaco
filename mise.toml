@@ -7,3 +7,18 @@ GOTOOLCHAIN = "local"
 
 [tools]
 go = "1.27.4"
+
+# Tasks: the names are fixed by AGENTS.md ("Standard tasks"). CI runs the same
+# tasks.
+
+[tasks.test]
+description = "Unit tests"
+run = "go test ./..."
+
+[tasks."test:race"]
+description = "Unit tests with the race detector"
+run = "go test -race ./..."
+
+[tasks."lint:contracts"]
+description = "Check the links between the sections of README.md and the tests"
+run = "go run ./hack/lint-contracts"
