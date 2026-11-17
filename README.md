@@ -136,7 +136,26 @@ The MaintenanceWindow CRD's spec contains:
   cap across kinds. A node can be under several kinds of maintenance at the same time
   (depends on the triggers). See concurrency conflicts below.
   Lowering `concurrency` never releases nodes already under maintenance: it only
-  prevents new starts until the count falls below the new value.
+  prevents new starts until the count falls below the new value. `concurrency: 0` therefore
+  pauses a window: it starts nothing, and keeps the nodes it already keeps.
+
+The spec is validated as follows. The CRD schema rejects a window that breaks a structural
+rule; the controller marks a window `Invalid` when a rule needs more than the schema can check:
+
+| Field | Rules | Checked by |
+|---|---|---|
+| `startTime` | Required, at most 256 characters. | CRD |
+| | Grammar (see `startTime` above), and a known time zone. | controller |
+| `duration` | Required. A Go duration string (for example `2h30m`), from `1m` to `744h` (31 days). | CRD |
+| `nodeSelector` | Required. A Kubernetes label selector; `{}` selects all managed nodes. | CRD |
+| `conditionType` | Required. A Kubernetes condition type: a qualified name, at most 316 characters. | CRD |
+| | Starts with the default prefix `kumaco.kured.dev/`. | CRD |
+| | Starts with the controller's `--condition-prefix`, when it is not the default. | controller |
+| `startTriggers` | At most 16 expressions of at most 4096 characters each. An empty list is allowed: the schedule and `concurrency` alone then decide. | CRD |
+| | Every expression compiles. | controller |
+| `stopTriggers` | Optional. At most 16 expressions of at most 4096 characters each. | CRD |
+| | Every expression compiles. | controller |
+| `concurrency` | Required. An integer from 0 to 1000. | CRD |
 
 Daylight saving time follows the configured timezone without special handling: if a
 scheduled local time does not exist when clocks move forward, that occurrence does not
@@ -160,7 +179,8 @@ of nodes. It contains:
     `conditionType` without the reserved prefix).
     An `Invalid` window starts no maintenance and keeps no node under maintenance.
 - `nodesUnderMaintenance` (list): the names of the nodes this window selects that are under its
-  kind of maintenance. It stays small: it is bounded by the highest `concurrency` of the windows of that kind.
+  kind of maintenance. It stays small: it is bounded by the highest `concurrency` of the windows of that kind,
+  so it never holds more than 1000 names.
 - `matchingNodes` (int): the number of managed nodes matching `nodeSelector`.
 - `nodeCounts` (map): while the window is `InProgress`, how many of the matching nodes are in each situation:
   - `UnderMaintenance`: under this window's kind of maintenance;
