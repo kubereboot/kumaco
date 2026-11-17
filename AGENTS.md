@@ -228,6 +228,34 @@ snapshot/release previews. Publish container images to GitHub Container Registry
 Keep credentialed publication restricted to explicitly authorized release runs;
 local tests and previews must not publish artifacts.
 
+Build images `FROM scratch` with a static (`CGO_ENABLED=0`) binary, running as a
+numeric non-root user. Anything the binary needs at runtime must then be
+embedded or mounted, not taken from a base image. A base image other than
+`scratch` needs maintainer approval and a documented reason.
+
+Ship the deployment as a Helm chart and as kustomize manifests. Generate both
+from the same `controller-gen` CRD and RBAC output so they cannot drift, and
+validate both in the required checks. Both must support the per-team setups in
+`README.md`, including RBAC restricted to named nodes. Pkl and CUE packaging may
+follow later; do not add them before they are agreed.
+
+#### Versioning and release policy
+
+- Release tags follow SemVer (`vX.Y.Z`, release candidates `vX.Y.Z-rc.N`). They are
+  cut from `main`, only on a commit where every required check passed (Snyk
+  included), and the tags are signed.
+- Before v1.0.0, a minor release may contain breaking changes to metrics, the CRD
+  API, and exported Go symbols. Patch releases contain fixes only, never a
+  contract change.
+- Mark a breaking change with `!` in its commit title (`feat!: ...`). Release notes
+  group changes by Conventional Commits type and list breaking changes first,
+  with migration notes.
+- Only the latest release receives fixes; nothing is backported before v1.0.0.
+- Publish multi-arch images for `linux/amd64` and `linux/arm64`, tagged with the
+  version and the short commit (never a floating `latest` tag). Publish them with
+  SBOMs, build provenance, and keyless cosign signatures, as Kured does. Attach
+  the checksums, CRD, Helm chart, and kustomize manifests to the GitHub release.
+
 ## E2e: provision everything, never break Kured
 
 ### Environment and lifecycle
