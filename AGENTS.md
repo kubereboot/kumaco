@@ -393,9 +393,10 @@ embedded or mounted, not taken from a base image (time zone data comes from the
 embedded `time/tzdata` package, see `README.md`, "Time zones"). A base image
 other than `scratch` needs maintainer approval and a documented reason.
 
-Ship the deployment as a Helm chart and as kustomize manifests. Generate both
-from the same `controller-gen` CRD and RBAC output so they cannot drift, and
-validate both in the required checks. Both must support the per-team setups in
+Ship the deployment as a Helm chart and as kustomize manifests. Both deploy
+kumaco into the `kube-system` namespace by default. Generate both from the same
+`controller-gen` CRD and RBAC output so they cannot drift, and validate both in
+the required checks. Both must support the per-team setups in
 `README.md`, including RBAC restricted to named nodes. Pkl and CUE packaging may
 follow later; do not add them before they are agreed.
 

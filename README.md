@@ -894,6 +894,9 @@ defaults:
 
 kumaco has no webhook, so it has none of the `--webhook-*` flags.
 
+The shipped Helm chart and kustomize manifests deploy kumaco into the `kube-system` namespace
+by default.
+
 ### API request rate
 
 Heartbeats are kumaco's steady load on the API server: one node write per managed node per
@@ -913,8 +916,8 @@ service account. Requests from service accounts in other namespaces fall into th
 `service-accounts` FlowSchema and the `workload-low` priority level. On large clusters, you can
 give kumaco its own flow at the `workload-high` priority level with a FlowSchema such as the
 following. Its matching precedence must be lower than 900 to take effect before
-`kube-system-service-accounts` (adjust the ServiceAccount name and namespace to your
-deployment):
+`kube-system-service-accounts`. It assumes the default `kube-system` namespace of the shipped
+manifests; adjust the ServiceAccount name and namespace to your deployment:
 
 ```yaml
 apiVersion: flowcontrol.apiserver.k8s.io/v1
