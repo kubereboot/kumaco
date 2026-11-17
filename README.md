@@ -166,9 +166,13 @@ keep the window `InProgress` until the last one ends.
 The MaintenanceWindow CRD's status is a report: the controller writes it and never reads it
 back (what is under maintenance is recorded on the nodes). Its size does not depend on the number
 of nodes. It contains:
-- `state` (enum): This is a summarized result, determined based on spec and conditions.
-  State is a practical way for users to check the overall state,
-  rather than checking all the conditions independently.
+- `observedGeneration` (int): the `metadata.generation` of the spec this status was computed
+  from. A status whose `observedGeneration` is lower than `metadata.generation` does not
+  reflect the latest spec yet.
+- `state` (enum): This is a summarized result, determined from the spec, its schedule, and the
+  current time.
+  State is a practical way for users to check the overall state of the window,
+  rather than working it out from the schedule and the nodes.
   This is particularly useful when the maintenance manager sets complex CEL rules.
   `state` can be:
   - `InProgress`: the current time falls within a scheduled occurrence and its duration.
@@ -178,6 +182,8 @@ of nodes. It contains:
   - `Invalid`: the input of the CRD is incorrect (unparsable schedule, CEL compile error,
     `conditionType` without the reserved prefix).
     An `Invalid` window starts no maintenance and keeps no node under maintenance.
+- `message` (string): for humans, why the window is `Invalid` (for example the CEL compile
+  error). Empty in the other states.
 - `nodesUnderMaintenance` (list): the names of the nodes this window selects that are under its
   kind of maintenance. It stays small: it is bounded by the highest `concurrency` of the windows of that kind,
   so it never holds more than 1000 names.
@@ -186,6 +192,13 @@ of nodes. It contains:
   - `UnderMaintenance`: under this window's kind of maintenance;
   - `UnmetTrigger`: the triggers do not allow maintenance to start;
   - `MaxConcurrencyReached`: the triggers allow it, but no slot is free.
+
+The status has no `conditions` list: `state` and `message` carry its summary.
+
+The status is only written when its content changes, and at most once every 10 seconds per
+window, so that node changes across a large cluster do not cause a write storm. A change of
+`state` or `observedGeneration` is written immediately. The status can therefore lag behind
+the nodes by up to 10 seconds; it changes no decision, as it is never read back.
 
 The situation of one particular node is not in the window's status but on the node itself: see "Debugging".
 
@@ -500,7 +513,8 @@ For every node released or started, apply `desiredConditions(node)` (see "One fu
 A start whose write is rejected is not a start: nothing is recorded, and the window is requeued.
 
 Sixth step - Report:
-- Update the MaintenanceWindow status from what was actually written.
+- Update the MaintenanceWindow status from what was actually written (at most once every
+  10 seconds, see the status description).
 - Remember each matching node's situation for its `MaintenanceInProgress` message.
 - Emit events (see "Debugging") and update the metrics.
 - Enqueue the other windows selecting the nodes released or started.
