@@ -309,11 +309,12 @@ necessary tests and documentation, and leave applicable checks passing. Split
 independent outcomes into separate commits. The TDD red phase is demonstrated
 locally, not left as a broken intermediate commit.
 
-Use a Conventional Commits title describing what the change does. Keep the entire
-title, including its type and optional scope, to at most 50 characters. Example:
+Use a Conventional Commits title describing what the change does, without a
+scope: `type: description`, or `type!: description` for a breaking change. Keep
+the entire title to at most 50 characters. Example:
 
 ```text
-fix: retain live target metadata (manifests)
+fix: retain live target metadata in manifests
 ```
 
 Separate the title from the body with a blank line. The body is the most important
@@ -334,5 +335,11 @@ may exceed that limit, but put them on separate lines at the end. Refer to links
 in the body as `[0]`, `[1]`, etc., and place their definitions before the final
 sign-off, for example `[0]: https://example.org/reference`.
 
-Finish every commit message with `Signed-Off-By: Full Name <email>`, using the
-contributor's actual identity.
+Finish every commit message with `Signed-off-by: Full Name <email>` (as
+`git commit -s` writes it), using the contributor's actual identity.
+
+The sign-off is a human's Developer Certificate of Origin attestation. AI-generated
+changes need a human sign-off: the human who reviewed the change and takes
+responsibility for it. An agent never signs off in its own name. It adds a human's
+`Signed-off-by` only when that human has reviewed the change and asked for the
+commit.
