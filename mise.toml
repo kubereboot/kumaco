@@ -1,0 +1,9 @@
+# Development tools and tasks (see AGENTS.md, "Tooling, CI, and releases").
+# Every version is exact; mise.lock records the checksums.
+
+[env]
+# Only use the Go toolchain pinned below: never let Go download another one.
+GOTOOLCHAIN = "local"
+
+[tools]
+go = "1.27.4"
