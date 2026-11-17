@@ -7,6 +7,9 @@ GOTOOLCHAIN = "local"
 
 [tools]
 go = "1.27.4"
+# kind and the node image in test/e2e/kind.yaml are bumped together: the image
+# must be the default node image of this kind release.
+kind = "0.33.0"
 
 # envtest control plane (kube-apiserver and etcd) of the supported Kubernetes
 # minor release. Its binaries are not put on PATH: test:envtest passes their
@@ -33,6 +36,14 @@ run = "go test -race ./..."
 [tasks."test:envtest"]
 description = "envtest suite: tests against a real kube-apiserver and etcd"
 run = 'KUBEBUILDER_ASSETS="$(mise where http:envtest)/envtest" go test -tags=envtest -count=1 ./...'
+
+[tasks.e2e]
+# The tests require a cluster name: this task designates kumaco-e2e. mise
+# appends the arguments of the task, and the last -cluster wins:
+#   mise run e2e -- -keep
+#   mise run e2e -- -cluster=<name>
+description = "Kind e2e suite, on the kind cluster kumaco-e2e. Creates it unless an earlier run kept it, and deletes it afterwards unless -keep is given"
+run = "go test -tags=e2e -count=1 -timeout=45m -v ./test/e2e -args -cluster=kumaco-e2e"
 
 [tasks."lint:contracts"]
 description = "Check the links between the sections of README.md and the tests"
