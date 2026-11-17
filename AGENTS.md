@@ -221,6 +221,20 @@ implemented README contract needs coverage; a changed contract needs approved
 specification and test changes together. Use Go's `testing` package, not an
 additional testing or assertion framework.
 
+Link each test to the README sections it enforces with a comment naming the
+section's heading anchor, for example `// README: #heartbeat-contract`; a test may
+name several sections. `mise run lint:contracts` (standard library only) checks
+these links:
+
+- It always fails on a link to a section that does not exist, which catches
+  renamed or removed sections.
+- It fails on a README section that no test links to, unless the section is
+  listed, with a reason, as `pending` (its behaviour is not implemented yet) or
+  `informative` (it describes no testable behaviour). The list lives next to the
+  task.
+- It fails on a `pending` section that tests already link to, so the list stays
+  current.
+
 Use the lowest test level that can prove a behaviour:
 
 - Unit tests for pure domain decisions, with explicit inputs and no API server.
@@ -243,8 +257,9 @@ Keep determinism simple:
 Run the relevant `mise run` tasks locally before proposing an implementation
 change; do not rely on GitHub Actions to discover whether it works. Before merge,
 require clean formatting, `go vet`, unit tests, race tests, dependency-policy lint,
-cognitive-complexity lint, security/license checks (Snyk is CI-only, see "Security
-and license scanning"), `generate:check`, and compatibility/e2e suites.
+cognitive-complexity lint, `lint:contracts`, security/license checks (Snyk is
+CI-only, see "Security and license scanning"), `generate:check`, and
+compatibility/e2e suites.
 Agree on the complexity lint tool and threshold before introducing it; keep its
 configuration identical locally and in CI.
 
@@ -291,6 +306,7 @@ already exist.
 | `lint` | Check formatting and run `go vet`, `logcheck`, and the other linters. |
 | `lint:deps` | Dependency-policy gate (modules, imports, exception reviews). |
 | `lint:complexity` | Cognitive-complexity gate. |
+| `lint:contracts` | Links between README sections and tests (see "Tests and required checks"). |
 | `generate` | Regenerate all generated code and manifests (`controller-gen` output: deepcopy, CRDs, RBAC). |
 | `generate:check` | Run `generate` and fail if the working tree changed. |
 | `test` | Unit tests. |
