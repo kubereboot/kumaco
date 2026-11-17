@@ -18,6 +18,7 @@
   - [How kured relies on kumaco](#how-kured-relies-on-kumaco-and-how-to-configure-your-maintenance-window-for-kured)
   - [Using kumaco with the node readiness controller](#using-kumaco-with-the-node-readiness-controller)
   - [Using kumaco with node problem detector](#using-kumaco-with-node-problem-detector)
+- [Configuration](#configuration)
 - [Compatibility](#compatibility)
 - [Metrics](#metrics)
 - [Gotchas](#gotchas)
@@ -100,7 +101,7 @@ The MaintenanceWindow CRD's spec contains:
   records, and the consumer watches a single condition type, whatever the number of windows.
   Use one type per kind of maintenance, not one per window.
   The type must start with the controller's reserved prefix
-  (`kumaco.kured.dev/` by default, configurable per controller), which is enforced by the
+  (`kumaco.kured.dev/` by default, configurable per controller with `--condition-prefix`), which is enforced by the
   controller (otherwise the window is `Invalid`), and by CRD validation for the default prefix. Without this, a
   maintenance manager, who has no node write access, could make the controller write or delete
   conditions owned by others (`Ready`, `detectors.kured.dev/RebootRequired`, ...).
@@ -169,7 +170,7 @@ The situation of one particular node is not in the window's status but on the no
 
 The controller watches:
 
-1. cluster-wide custom resources `MaintenanceWindow` (matching a certain label if configured for it, for example in the case of multiple kumaco deployments);
+1. cluster-wide custom resources `MaintenanceWindow` (only those matching `--window-label-selector` if it is set, for example in the case of multiple kumaco deployments);
 2. node changes;
 3. time-based requeues.
 
@@ -543,7 +544,7 @@ has its own concurrency pool.
 #### Replicas of the same controller
 
 Replicas of the same named controller (managing the same windows and node group)
-share a leader-election Lease:
+share a leader-election Lease, named after `--controller-name`, in the controller's namespace:
 only the leader reconciles and writes MaintenanceWindow status and node conditions.
 The leader processes window reconciliations sequentially. A new leader waits for its
 API view to sync, then runs the startup sweep before ordinary reconciliation. It needs
@@ -566,19 +567,19 @@ conditions before revoking its write access, then grant access to the new contro
 The controller can watch node changes with read-only access, but must not write status on
 nodes outside its group.
 
-#### The softer approach: the controller watch label
+#### The softer approach: the window label selector
 
 If you have a kubernetes cluster used by different teams, you can do this by running
-n deployments of kumaco, each of them with their watcher label.
+n deployments of kumaco, each of them with its own `--window-label-selector`.
 
-Kumaco will only watch for MaintenanceWindows matching the label configured for its team.
-This label alone is not a node access boundary; the administrator must ensure the teams'
+Kumaco will only watch for MaintenanceWindows matching the label selector configured for its team.
+This selector alone is not a node access boundary; the administrator must ensure the teams'
 node groups do not overlap.
 
 In other words, the administrator has configured the kumaco controller deployment for team A
-to only watching for MaintenanceWindow CRDs matching the label "MaintenanceWindowTeam: A".
-The administrator has configured another kumaco controller deployment, for team B, only
-watching for the MaintenanceWindow CRD matching the label "MaintenanceWindowTeam: B".
+with `--window-label-selector=MaintenanceWindowTeam=A`, so it only watches MaintenanceWindows
+labeled `MaintenanceWindowTeam: A`. The administrator has configured another kumaco
+controller deployment, for team B, with `--window-label-selector=MaintenanceWindowTeam=B`.
 
 For this approach, the administrator must enforce an admission policy (with tools like
 kubewarden, kyverno, or OPA) tying the maintenance manager's identity to:
@@ -741,6 +742,29 @@ Kured requires kumaco to:
 Kured then only focuses on setting new conditions/labels/annotations on nodes and rebooting.
 Those node changes requeue kumaco reconciliations, which is fine: a reconcile that changes nothing writes nothing.
 
+## Configuration
+
+kumaco is configured with command-line flags:
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--controller-name` | `kumaco` | Name of this controller: the name of its leader-election Lease, and the source of its events. Controllers for different teams need different names. |
+| `--node-selector` | empty (all nodes) | Label selector of the nodes this controller manages (see "The node is the record"). |
+| `--window-label-selector` | empty (all windows) | Label selector of the MaintenanceWindows this controller reconciles (see "The softer approach: the window label selector"). |
+| `--condition-prefix` | `kumaco.kured.dev/` | Reserved prefix that every `conditionType` must start with. |
+| `--heartbeat-interval` | `5m` | See "Heartbeat contract". |
+
+kumaco also keeps the standard flags of Kubebuilder-generated controllers, with their usual
+defaults:
+- `--metrics-bind-address`, `--metrics-secure`, `--metrics-cert-path`, `--metrics-cert-name`,
+  `--metrics-cert-key`, and `--enable-http2` for the metrics endpoint;
+- `--health-probe-bind-address` for the health probes;
+- `--leader-elect`, which the shipped Helm chart and kustomize manifests enable;
+- `--zap-devel`, `--zap-encoder`, `--zap-log-level`, `--zap-stacktrace-level`, and
+  `--zap-time-encoding` for logging.
+
+kumaco has no webhook, so it has none of the `--webhook-*` flags.
+
 ## Compatibility
 
 ### Kubernetes versions
@@ -750,6 +774,23 @@ Each kumaco release is built with the client libraries of that Kubernetes releas
 tested end to end on the node image of the latest kind release. Older Kubernetes versions
 are not supported, even where kumaco happens to work on them: `MaintenanceInProgress` only
 became a standard node condition in 1.37.
+
+### Public contracts
+
+These are kumaco's public contracts. Before v1.0.0, they may change in a minor release; such
+changes are listed first in the release notes, with migration notes:
+- the MaintenanceWindow CRD: its spec, validation, and status (including the `state` values);
+- the condition types kumaco writes (see "Condition types and their owners") and their reasons
+  (`KumacoMaintenanceRunning`, `KumacoNoMaintenance`);
+- the heartbeat contract;
+- the event reasons (see "Debugging");
+- the server-side apply field manager, `kumaco`;
+- the leader-election Lease name (`--controller-name`);
+- the command-line flags (see "Configuration");
+- the metrics (see "Metrics");
+- the Helm chart values and the kustomize manifests' configuration.
+
+Messages (of conditions, events, and status) are for humans and are not contracts.
 
 ## Metrics
 
@@ -800,10 +841,13 @@ The window's `status.nodeCounts` (and the matching metric) tell how many nodes a
 
 kumaco emits events on the MaintenanceWindow. They are only emitted when something changes,
 so their number follows `concurrency`, not the number of nodes:
-- maintenance started on a node;
-- a node was released, and why (stop trigger, selector, end of the window, invalid or deleted window);
-- a trigger expression errored or timed out for a node;
-- a start was rejected because the node changed concurrently.
+
+| Reason | Type | Emitted when |
+|---|---|---|
+| `MaintenanceStarted` | `Normal` | maintenance started on a node. |
+| `MaintenanceReleased` | `Normal` | a node was released; the message says why (stop trigger, selector, end of the window, invalid or deleted window). |
+| `TriggerFailed` | `Warning` | a trigger expression errored or timed out for a node. |
+| `StartConflict` | `Warning` | a start was rejected because the node changed concurrently. |
 
 kumaco also displays actions in its logs, which are intended for the _kumaco deployer_, to debug the controller.
 
