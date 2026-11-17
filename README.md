@@ -73,20 +73,54 @@ A CRD allow us to:
 - Let people define their own conditions to start a maintenance.
 
 The MaintenanceWindow CRD's spec contains:
-- `startTime`: a cron-like string.
-  It is structured as the following:
-  - an optional `CRON_TZ=<IANA timezone>`. Without `CRON_TZ`, the timezone is UTC.
-  - seven Quartz-style fields: second, minute, hour, day of month, month, day of week, year.
-  
-  For example,
-  `CRON_TZ=Europe/Brussels 0 0 2 1 1 ? 2027` starts once at 02:00 Brussels time on 2027-01-01;
-  `CRON_TZ=Europe/Brussels 0 0 2 * * ? *` starts daily at 02:00 local time.
+- `startTime` (string): when the window's occurrences start, as a Quartz cron expression with
+  an optional time zone prefix:
 
-  The timezone prefix plus year-aware fields is kumaco's defined input format, not a
+  ```
+  [CRON_TZ=<IANA time zone> ]<second> <minute> <hour> <day of month> <month> <day of week> <year>
+  ```
+
+  Without `CRON_TZ`, the time zone is UTC. All seven fields are required:
+
+  | Field | Allowed values | Allowed special characters |
+  |---|---|---|
+  | second | `0`-`59`, as a single value | none |
+  | minute | `0`-`59` | `,` `-` `*` `/` |
+  | hour | `0`-`23` | `,` `-` `*` `/` |
+  | day of month | `1`-`31` | `,` `-` `*` `/` `?` `L` `W` |
+  | month | `1`-`12` or `JAN`-`DEC` | `,` `-` `*` `/` |
+  | day of week | `1`-`7` or `SUN`-`SAT` (**`1` is Sunday**) | `,` `-` `*` `/` `?` `L` `#` |
+  | year | `1970`-`2099` | `,` `-` `*` `/` |
+
+  The fields follow [Quartz's semantics](https://www.quartz-scheduler.org/documentation/quartz-2.3.0/tutorials/crontrigger.html):
+  - `*` means all values, `,` separates a list (`MON,WED,FRI`), `-` is a range (`MON-FRI`), and
+    `/` an increment (`0/15` in the minute field means minutes 0, 15, 30 and 45).
+  - `?` means "no specific value". Exactly one of day of month and day of week must be `?`.
+  - `L` in day of month is the last day of the month, and `L-3` the third-to-last day. In day of
+    week, `L` alone means Saturday (`7`), and `6L` the last Friday of the month.
+  - `W` in day of month is the weekday nearest to the given day, within the same month (`15W`).
+    `LW` is the last weekday of the month.
+  - `#` in day of week is the n-th given day of the month: `3#2` is the second Tuesday.
+  - Month and day names are case-insensitive.
+  - Day of week counts from Sunday = `1`, unlike Unix cron, where Sunday is `0`.
+  - The second field must be a single value, so that a window starts at most once a minute.
+    This bounds the cost of evaluating schedules.
+
+  For example:
+  - `CRON_TZ=Europe/Brussels 0 0 2 1 1 ? 2027` starts once, at 02:00 Brussels time on 2027-01-01;
+  - `CRON_TZ=Europe/Brussels 0 0 2 * * ? *` starts daily at 02:00 Brussels time;
+  - `CRON_TZ=America/New_York 0 30 1 ? * MON-FRI *` starts at 01:30 New York time on weekdays;
+  - `0 0 22 ? * 3#2 *` starts at 22:00 UTC on the second Tuesday of every month;
+  - `CRON_TZ=Europe/Brussels 0 30 23 ? * FRI *` with `duration: 1h` starts every Friday at
+    23:30 Brussels time and ends on Saturday at 00:30: an occurrence belongs to the day it
+    starts on (here, Friday), and the window stays `InProgress` across midnight.
+
+  The time zone prefix plus the year field is kumaco's defined input format, not a
   universally standardized cron expression. No common cron library parses it, so kumaco
-  needs its own parser. Because a window is active when `now` falls in
-  `[start, start+duration)`, it must also find the latest occurrence at or before `now`
-  (all of them, if occurrences overlap), not only the next one.
+  has its own parser. A window is active when `now` falls in `[start, start+duration)` for one
+  of its occurrences, so only the occurrences starting in `(now - duration, now]` can be
+  active: `duration` bounds that search. See "When does a window keep a node under
+  maintenance?" for occurrences that overlap or follow each other without a gap.
 
 - `duration` (duration): maximum real elapsed time for a maintenance window. In other words: a maintenance window is active if between `[startTime, startTime+duration)`
 - `nodeSelector` (kubernetes labelSelector): the nodes on which the maintenance window is applied to.
@@ -451,8 +485,14 @@ window once (step 3 of the startup), and the rule is checked there, as in every 
 A stale heartbeat is deliberately not used for this: it would also release nodes after a short
 outage inside the same occurrence, in the middle of their maintenance.
 
-If occurrences of a window overlap (its `duration` is longer than the time between two
-starts), its "current occurrence" starts at the earliest occurrence of the overlapping chain.
+If occurrences of a window overlap or follow each other without a gap (an occurrence starts
+before, or exactly when, the previous one ends), they form a chain, and the window's "current
+occurrence" starts at the earliest occurrence of the chain. A window running 24/7 as daily
+24-hour occurrences is therefore a single chain: its records are not released every midnight.
+The chain is followed back at most 31 days. If it is longer, the current occurrence starts at
+the earliest occurrence of the chain that started at most 31 days ago: a node kept under
+maintenance for more than 31 days by a continuous window is released, and becomes a
+candidate again.
 
 A consequence for windows of the same kind: when a window ends, the nodes it started are only
 kept by another window if they started during that other window's current occurrence.
