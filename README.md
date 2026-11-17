@@ -947,6 +947,28 @@ Each controller exports:
   (alert when it exceeds the heartbeat interval by a wide margin).
 - `kumaco_leader`: gauge, 1 on the replica currently leading, 0 otherwise.
 
+These `kumaco_*` metrics are kumaco's metrics contract (see "Compatibility"). The same
+endpoint also exports the metrics of controller-runtime (`controller_runtime_*`,
+`workqueue_*`, ...), client-go, and the Go runtime (`go_*`, `process_*`), as those projects
+define them: they are not part of kumaco's contract, and can change when kumaco upgrades
+these libraries.
+
+`kumaco_node_slot_occupied` has one series per managed node: a 10,000-node cluster has
+10,000 series of it. That is often more than a monitoring system should keep for a single
+gauge. The other kumaco metrics are bounded by the
+number of windows, not nodes. If you do not need the per-node view, drop it when scraping, for
+example with a Prometheus `metric_relabel_configs` rule:
+
+```yaml
+metric_relabel_configs:
+  - source_labels: [__name__]
+    regex: kumaco_node_slot_occupied
+    action: drop
+```
+
+`kumaco_maintenance_window_nodes` still gives the number of nodes under maintenance per
+window.
+
 ## Gotchas
 
 A `stopTriggers` expression depending on a condition this window sets can oscillate.
