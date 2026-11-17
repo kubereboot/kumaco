@@ -84,6 +84,49 @@ Do not make a failing test pass by weakening an agreed contract.
 - Reuse existing code and standard-library facilities. Add an abstraction only
   when the current change demonstrates its need.
 
+## Logging
+
+Logs are for the kumaco deployer debugging the controller. Maintenance managers
+get events, status, and node condition messages instead (see `README.md`).
+
+- Use the logr API without importing `github.com/go-logr/logr` directly. Get
+  loggers with `sigs.k8s.io/controller-runtime/pkg/log.FromContext(ctx)` (or
+  `klog.FromContext`), and name the type as `klog.Logger` from `k8s.io/klog/v2`,
+  which is an alias of `logr.Logger`. This is the approved reading of the
+  dependency policy for logging; it is not a precedent for other modules.
+- Keep the logging backend Kubebuilder scaffolds: controller-runtime's zap backend
+  (`sigs.k8s.io/controller-runtime/pkg/log/zap`, set with `ctrl.SetLogger`, with
+  its flags bound by `zap.Options.BindFlags`). It is an approved exception (see
+  "Approved exceptions"). Also pass that logger to `klog.SetLogger`, so that
+  client-go logs use the same output and verbosity. Never import
+  `go.uber.org/zap` packages directly.
+- Domain code never logs. It returns its decisions, and the reconciler or other
+  boundary code logs them, so domain functions stay pure.
+- In reconcilers, log through the logger in the reconcile `ctx`. It already
+  carries controller-runtime's `controller`, `name`, and `reconcileID` keys, so
+  do not add them again.
+- Do not log an error that you also return: controller-runtime already logs every
+  error returned by `Reconcile` ("Reconciler error"). Log only errors that are
+  handled locally.
+- Messages are constant strings. Put variable data in key/value pairs with
+  lowerCamelCase keys, as Kubernetes structured logging does. Use the same key for
+  the same concept everywhere (for example `node`, `conditionType`).
+- Log object names and UIDs, never whole objects, annotation values, credentials,
+  or tokens.
+
+Verbosity levels:
+
+| Level | Content |
+|---|---|
+| `Error` and `V(0)` | Errors handled locally. Decisions: maintenance started, node released and why, window `Invalid`, start rejected by a write conflict, leadership changes, startup sweep milestones. |
+| `V(1)` | Reconcile summaries: window state, node counts, next requeue. |
+| `V(2)` | Per-node trigger results. |
+| `V(4)` | Details of API writes (condition types and statuses sent, preconditions). |
+
+`mise run lint` runs Kubernetes' `logcheck` (`sigs.k8s.io/logtools`, installed
+through mise) to check logging calls, including their key/value pairs, which
+`go vet` does not check for logr.
+
 ## Dependencies and versions
 
 ### Allowed dependencies
@@ -124,6 +167,28 @@ Review each exception at least annually; its next review is due no later than on
 year after approval or the previous review. Remove exceptions when no longer needed.
 CEL is an anticipated exception, not blanket permission for unspecified modules:
 record and approve its concrete dependency scope before adding it.
+
+A package on an allowed host that wraps a non-allowed module also needs an
+exception, and the lint gate must reject it without one. The lint gate keeps a
+list of such packages, starting with `sigs.k8s.io/controller-runtime/pkg/log/zap`.
+
+#### Approved exceptions
+
+Until the machine-readable allowlist exists, approved exceptions are recorded
+here. Move them into the allowlist when the lint gate lands.
+
+- **`sigs.k8s.io/controller-runtime/pkg/log/zap`**, which links
+  `go.uber.org/zap` and `go.uber.org/zap/zapcore`.
+  - Scope: production (the manager entry point) and tests may import
+    `sigs.k8s.io/controller-runtime/pkg/log/zap`. Direct imports of
+    `go.uber.org/zap` packages stay forbidden.
+  - Reason: it is the logging backend that Kubebuilder scaffolds and
+    controller-runtime documents. A standard-library `log/slog` backend would
+    work, but keeping the default keeps the generated code standard, which makes
+    long-term maintenance and scaffold upgrades simpler.
+  - Approval: approved by maintainer evrardjp on 2026-11-17; the reference is the
+    review of the change that adds this entry. Reviewed 2026-11-17, next review due
+    2027-11-17.
 
 ### Version selection
 
@@ -212,7 +277,7 @@ already exist.
 | Task | Purpose |
 |---|---|
 | `fmt` | Format the code in place. |
-| `lint` | Check formatting and run `go vet` and the other linters. |
+| `lint` | Check formatting and run `go vet`, `logcheck`, and the other linters. |
 | `lint:deps` | Dependency-policy gate (modules, imports, exception reviews). |
 | `lint:complexity` | Cognitive-complexity gate. |
 | `generate` | Regenerate all generated code and manifests (`controller-gen` output: deepcopy, CRDs, RBAC). |
