@@ -145,6 +145,17 @@ implemented README contract needs coverage; a changed contract needs approved
 specification and test changes together. Use Go's `testing` package, not an
 additional testing or assertion framework.
 
+Use the lowest test level that can prove a behaviour:
+
+- Unit tests for pure domain decisions, with explicit inputs and no API server.
+- envtest (`sigs.k8s.io/controller-runtime/pkg/envtest`, a real kube-apiserver and
+  etcd) for behaviour that depends on API server semantics and that fakes do not
+  model faithfully: server-side apply ownership and merging, `resourceVersion`
+  preconditions and conflicts, CRD schema and CEL validation, status subresource
+  writes, and RBAC denials. Install and pin the envtest control-plane binaries
+  through mise.
+- Kind-based e2e for real-component integration (see "E2e").
+
 Keep determinism simple:
 
 - Pass an explicit time value into time-dependent decision logic where needed;
