@@ -63,6 +63,9 @@ Two kind of people are involved in kumaco's deployment:
 
 ### The kumaco.kured.dev MaintenanceWindow CRD
 
+`MaintenanceWindow` is a cluster-scoped resource of the API group `kumaco.kured.dev`, version
+`v1alpha1` (see "Compatibility" for how versions evolve).
+
 A CRD allow us to:
 - Validate input easily like any config map would
 - Report the state of the MaintenanceWindow (`InProgress`, `Scheduled`, `Closed`, `Invalid`)
@@ -774,6 +777,15 @@ Each kumaco release is built with the client libraries of that Kubernetes releas
 tested end to end on the node image of the latest kind release. Older Kubernetes versions
 are not supported, even where kumaco happens to work on them: `MaintenanceInProgress` only
 became a standard node condition in 1.37.
+
+### API versions
+
+The MaintenanceWindow API is `kumaco.kured.dev/v1alpha1`. While it is in alpha, a breaking
+schema change is released as a new alpha version (`v1alpha2`, ...) that replaces the previous
+one, without a conversion webhook: users re-apply their MaintenanceWindows in the new version.
+No maintenance state is lost, because what is under maintenance is recorded on the nodes, not
+in the windows (see "The node is the record"). Conversion between served versions is only
+provided from `v1beta1` on.
 
 ### Public contracts
 
