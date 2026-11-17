@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="kumaco.svg" alt="kumaco logo" width="200">
+</p>
+
 # kumaco - Kubernetes Maintenance Controller
 
 - [Introduction](#introduction)
