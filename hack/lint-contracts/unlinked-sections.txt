@@ -40,7 +40,6 @@ informative #explanation-of-interconnection-with-kured Rationale: the behaviour 
 pending #configuration The controller and its flags are not implemented yet.
 pending #api-request-rate The controller and its scale benchmark are not implemented yet.
 informative #compatibility Heading only: its subsections hold the contracts.
-pending #kubernetes-versions No test runs against a Kubernetes API server yet.
 pending #api-versions The MaintenanceWindow CRD is not implemented yet.
 informative #public-contracts Lists the contracts that the other sections define, and the release policy for them.
 pending #metrics The controller is not implemented yet.

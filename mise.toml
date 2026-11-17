@@ -8,6 +8,17 @@ GOTOOLCHAIN = "local"
 [tools]
 go = "1.27.4"
 
+# envtest control plane (kube-apiserver and etcd) of the supported Kubernetes
+# minor release. Its binaries are not put on PATH: test:envtest passes their
+# directory to the tests.
+[tools."http:envtest"]
+version = "1.37.0"
+url = 'https://github.com/kubernetes-sigs/controller-tools/releases/download/envtest-v{{ version }}/envtest-v{{ version }}-{{ os(macos="darwin") }}-{{ arch(x64="amd64") }}.tar.gz'
+checksum_url = 'https://github.com/kubernetes-sigs/controller-tools/releases/download/envtest-v{{ version }}/envtest-v{{ version }}-{{ os(macos="darwin") }}-{{ arch(x64="amd64") }}.tar.gz.sha512'
+# The checksum file names the archive with a leading "/", which mise does not
+# match against the archive name: take the hash, its first field.
+checksum_expr = '"sha512:" + split(body, " ")[0]'
+
 # Tasks: the names are fixed by AGENTS.md ("Standard tasks"). CI runs the same
 # tasks.
 
@@ -18,6 +29,10 @@ run = "go test ./..."
 [tasks."test:race"]
 description = "Unit tests with the race detector"
 run = "go test -race ./..."
+
+[tasks."test:envtest"]
+description = "envtest suite: tests against a real kube-apiserver and etcd"
+run = 'KUBEBUILDER_ASSETS="$(mise where http:envtest)/envtest" go test -tags=envtest -count=1 ./...'
 
 [tasks."lint:contracts"]
 description = "Check the links between the sections of README.md and the tests"
