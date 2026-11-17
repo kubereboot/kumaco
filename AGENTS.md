@@ -58,8 +58,16 @@ Do not make a failing test pass by weakening an agreed contract.
 - Put maintenance decisions and their invariants in domain logic, separate from
   Kubernetes I/O, CLI handling, and process lifecycle. Kubernetes types are not
   categorically forbidden in domain code.
+- Prefer pure functions wherever practical, especially for domain decisions: the
+  same explicit inputs produce the same outputs, without I/O, hidden clock/global
+  state, or mutation of inputs. Keep side effects at the boundaries. Never mutate
+  shared informer objects; construct desired changes separately.
 - Keep domain decisions testable without a running cluster. Status, metrics, and
   other derived views must not become alternative sources of truth.
+- Keep cognitive complexity low: use clear names, focused functions, guard clauses,
+  and shallow control flow. Extract meaningful decisions, not arbitrary helpers
+  just to satisfy a metric. Do not add abstractions that make a simple flow harder
+  to follow.
 - Prefer cohesive packages and explicit responsibilities. Introduce interfaces at
   real boundaries when needed, not one per type. Do not require repositories,
   factories, services, or a fixed directory hierarchy merely to claim DDD.
@@ -74,21 +82,24 @@ Direct Go modules and imports are limited to:
 
 - This repository's own packages.
 - The Go standard library.
-- Modules and packages under `k8s.io/`.
+- Modules and packages hosted at `k8s.io` or any of its subdomains, including
+  `sigs.k8s.io/controller-runtime`.
 - Explicitly approved, documented exceptions.
 
 This applies to production code, tests, tools, and generated code, including
-supported build-tag variants. `sigs.k8s.io/` and other namespaces are not implicitly
-allowed. Do not vendor, copy, or shell out to a library to bypass this policy.
+supported build-tag variants. Match the host, not a substring: `sigs.k8s.io` is
+allowed; `k8s.io.example.org` is not. Do not vendor, copy, or shell out to a library
+to bypass this policy.
 
 Necessary transitive dependencies are permitted. Review changes to the module
 graph and `go.sum`; do not import a forbidden package directly merely because it
 is already present transitively.
 
 Implementation must provide a required dependency-policy lint gate covering both
-direct modules and imports. Test the lint rule against allowed and forbidden
-cases, including a forbidden direct import of a transitive dependency. It must
-reject unapproved dependencies and overdue exception reviews.
+direct modules and imports. Test the lint rule against the allowed root domain
+and subdomains, lookalike hosts, and forbidden dependencies, including a forbidden
+direct import of a transitive dependency. It must reject unapproved dependencies
+and overdue exception reviews.
 
 ### Exceptions
 
@@ -96,7 +107,7 @@ Obtain maintainer approval before introducing an exception. Keep approved
 exceptions in a machine-readable allowlist consumed by the lint gate, recording:
 
 - Exact module/import scope and permitted use (production, tests, or tools).
-- Why standard-library and `k8s.io/` alternatives are insufficient.
+- Why the standard library and allowed Kubernetes modules are insufficient.
 - Approval reference, review date, and next review due date.
 
 Review each exception at least annually; its next review is due no later than one
@@ -132,15 +143,90 @@ Keep determinism simple:
   not arbitrary sleeps that assume convergence has finished.
 - Bound waits and external commands; include useful diagnostics on timeout.
 
-Before merging implementation changes, require clean formatting, `go vet`, unit
-tests, race tests, dependency-policy lint, and the compatibility/e2e suites. Add
-focused fuzz tests for parsers and scheduling inputs. Benchmarks and scale tests
-are required for performance-sensitive changes. Document the actual commands as
-the tooling is introduced; this file does not imply they already exist.
+Run the relevant `mise run` tasks locally before proposing an implementation
+change; do not rely on GitHub Actions to discover whether it works. Before merge,
+require clean formatting, `go vet`, unit tests, race tests, dependency-policy lint,
+cognitive-complexity lint, security/license checks, and compatibility/e2e suites.
+Agree on the complexity lint tool and threshold before introducing it; keep its
+configuration identical locally and in CI.
+
+Add focused fuzz tests for parsers and scheduling inputs. Benchmarks and scale
+tests are required for performance-sensitive changes. Document the actual tasks
+as tooling is introduced; this file does not imply they already exist.
 
 Required checks must not silently skip missing infrastructure or components. A
 missing prerequisite cannot produce a successful compatibility gate. Do not merge
 an implementation change with required gates unavailable or failing.
+
+## Tooling, CI, and releases
+
+### Local-first tooling
+
+- Use `mise` for development tool/runtime installation and version management,
+  pinned in `mise.toml` and the associated lockfile where applicable. Go module
+  dependencies remain managed by Go modules and the policy above.
+- Use `mise run <task>` as the entry point for building, generation, formatting,
+  linting, tests, scans, release previews, and dependency-update validation. Do not
+  introduce Makefiles or a parallel task system. Replace Kubebuilder-generated
+  Makefile recipes with mise tasks rather than requiring Make behind the scenes.
+- Keep checks runnable locally with the same inputs, configuration, and failure
+  criteria as CI. Document prerequisites and required network access/credentials;
+  locally runnable does not necessarily mean offline.
+- These requested CLI tools are development infrastructure, not blanket exceptions
+  for importing their libraries into the Go module.
+
+### Controller development
+
+Use Kubebuilder to scaffold and develop the controller, keeping reconciliation
+and Kubernetes plumbing separate from pure domain decisions. Inspect generated
+code and dependencies; do not accept unnecessary scaffold features or its default
+test-framework dependencies instead of Go's `testing` package.
+
+Kubebuilder's `sigs.k8s.io/controller-runtime` dependency is allowed by the
+Kubernetes-domain policy; no exception is needed. Review all other direct modules
+and imports introduced by generated code or tooling against the same rules.
+
+### Security and license scanning
+
+- Use Trivy for repository/configuration and container-image security scanning.
+  Provide local mise tasks, and scan release candidate images before publication.
+- Use Snyk for dependency security and license scanning, through local CLI tasks
+  wherever supported. Document any authentication, service, plan, or feature
+  limitations. If a required capability cannot run locally, raise it with the
+  maintainer and agree on an alternative rather than silently omitting the check.
+- GitHub Actions must invoke these same scan tasks, not provide the only scanning
+  implementation. Missing credentials or scan failures must not masquerade as
+  passing required checks. Agree on finding thresholds and documented exceptions
+  before enforcing scan policy.
+
+### GitHub Actions and maintenance automation
+
+- Use GitHub Actions to run the same `mise run` tasks contributors run locally.
+  Workflows may handle runner setup, caching, authentication, and artifacts; do not
+  duplicate build/test/scan logic in workflow-only commands.
+- Use [cncf/prow-github-actions](https://github.com/cncf/prow-github-actions) for
+  issue/PR workflow automation. Configure only the needed functionality; it must
+  not bypass required checks or approvals. Do not enable automatic merging without
+  maintainer approval.
+- Pin third-party actions to immutable commit SHAs. Keep token permissions minimal
+  and never execute untrusted PR code with privileged tokens or release secrets.
+- Use Updatecli to propose updates to GitHub Actions (including SHA pins), container
+  images, and `mise.toml`. Update related lockfiles/pins coherently and run the same
+  validation gates. Keep update PRs atomic; automation is not a review exemption.
+
+### Releases and images
+
+Use GoReleaser for releases, informed by the
+[Kured release configuration](https://github.com/kubereboot/kured/blob/main/.config/goreleaser.yaml)
+and its [tag workflow](https://github.com/kubereboot/kured/blob/main/.github/workflows/on-tag.yaml).
+Adopt the relevant build, scan, and publication flow, not unrelated artifacts,
+platform targets, dependencies, or Makefile conventions.
+
+Provide locally runnable mise tasks for configuration validation and non-publishing
+snapshot/release previews. Publish container images to GitHub Container Registry
+(`ghcr.io`) through the release process, after the required checks and scans pass.
+Keep credentialed publication restricted to explicitly authorized release runs;
+local tests and previews must not publish artifacts.
 
 ## E2e: provision everything, never break Kured
 
