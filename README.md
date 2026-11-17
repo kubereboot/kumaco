@@ -18,6 +18,7 @@
   - [How kured relies on kumaco](#how-kured-relies-on-kumaco-and-how-to-configure-your-maintenance-window-for-kured)
   - [Using kumaco with the node readiness controller](#using-kumaco-with-the-node-readiness-controller)
   - [Using kumaco with node problem detector](#using-kumaco-with-node-problem-detector)
+- [Compatibility](#compatibility)
 - [Metrics](#metrics)
 - [Gotchas](#gotchas)
 - [Debugging](#debugging-with-kumaco-events)
@@ -348,8 +349,9 @@ anymore (released node, deleted windows, changed `conditionType`) is removed by 
 
 Only kumaco-owned condition types are sent, so other reporters' conditions are preserved and
 ownership is explicit. Never replace the whole conditions list.
-(Check that `NodeStatus.conditions` is a map-type list, keyed by `type`, in all supported Kubernetes versions;
-otherwise fall back to a strategic merge patch.)
+This relies on `NodeStatus.conditions` being a map-type list keyed by `type`, which it is
+in every supported Kubernetes version (see "Compatibility"): server-side apply then merges
+conditions per type.
 
 Rules for these writes:
 - `lastTransitionTime` is kept unless the `status` changes. A new condition gets the current time.
@@ -738,6 +740,16 @@ Kured requires kumaco to:
 
 Kured then only focuses on setting new conditions/labels/annotations on nodes and rebooting.
 Those node changes requeue kumaco reconciliations, which is fine: a reconcile that changes nothing writes nothing.
+
+## Compatibility
+
+### Kubernetes versions
+
+kumaco supports the latest Kubernetes minor release only: 1.37 at the time of writing.
+Each kumaco release is built with the client libraries of that Kubernetes release, and
+tested end to end on the node image of the latest kind release. Older Kubernetes versions
+are not supported, even where kumaco happens to work on them: `MaintenanceInProgress` only
+became a standard node condition in 1.37.
 
 ## Metrics
 

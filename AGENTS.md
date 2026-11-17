@@ -383,6 +383,8 @@ follow later; do not add them before they are agreed.
   group changes by Conventional Commits type and list breaking changes first,
   with migration notes.
 - Only the latest release receives fixes; nothing is backported before v1.0.0.
+  Each release supports the latest Kubernetes minor release only, as `README.md`
+  ("Compatibility") documents.
 - Publish multi-arch images for `linux/amd64` and `linux/arm64`, tagged with the
   version and the short commit (never a floating `latest` tag). Publish them with
   SBOMs, build provenance, and keyless cosign signatures, as Kured does. Attach
@@ -399,6 +401,9 @@ follow later; do not add them before they are agreed.
   target and verify it; never fall back to the developer's current kubeconfig
   context. Document prerequisites and make the setup reproducible for open-source
   contributors without private infrastructure.
+- Use the latest kind release and its default node image, which provides the only
+  supported Kubernetes minor release. Pin kind in `mise.toml` and the node image
+  by digest; Updatecli bumps both together. There is no Kubernetes version matrix.
 - Provision all required workloads and configuration into that cluster, including
   kumaco and the real integration components. Do not assume a preinstalled release
   or manually prepared application state.
