@@ -356,9 +356,16 @@ coverage. Fakes and manually patched conditions alone do not prove integration.
 Cover the README behaviour with:
 
 - Kured, `node-reboot-required-reporter`, and `reboot-inhibitors-reporter`.
+  Required.
 - Node readiness controller, including readiness-dependent release after reboot.
 - Node problem detector, including condition publication and coexistence with
   kumaco-owned conditions.
+
+The node readiness controller and node problem detector integrations are not
+implemented in e2e yet (`README.md` says so). Until they are, they are not merge
+gates, and their absence must not be reported as a passing check. Once a
+scenario for either one lands, it becomes required like the Kured suite, and
+`README.md` drops its "not in the e2e test yet" note in the same change.
 
 Kured compatibility is a required merge gate. Do not narrow the suite, skip a
 scenario, or relax expectations to accommodate an implementation regression.
