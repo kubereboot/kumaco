@@ -274,8 +274,12 @@ and imports introduced by generated code or tooling against the same rules.
 - Pin third-party actions to immutable commit SHAs. Keep token permissions minimal
   and never execute untrusted PR code with privileged tokens or release secrets.
 - Use Updatecli to propose updates to GitHub Actions (including SHA pins), container
-  images, and `mise.toml`. Update related lockfiles/pins coherently and run the same
-  validation gates. Keep update PRs atomic; automation is not a review exemption.
+  images, `mise.toml`, Go modules, and the Go toolchain (the `go` and `toolchain`
+  directives in `go.mod` together with the Go version in `mise.toml`). Move
+  coupled modules together, for example `k8s.io/*` with
+  `sigs.k8s.io/controller-runtime`. Kind images bumped with kind binary.
+  Update related lockfiles/pins coherently and run the same validation gates.
+  Keep update PRs atomic; automation is not a review exemption.
 
 ### Releases and images
 
