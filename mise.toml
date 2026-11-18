@@ -115,6 +115,8 @@ CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags='-s -w' -o "
 #   mise run e2e -- -keep
 #   mise run e2e -- -cluster=<name>
 description = "Kind e2e suite, on the kind cluster kumaco-e2e. Creates it unless an earlier run kept it, and deletes it afterwards unless -keep is given"
+# The suite deploys the image that this build saved.
+depends = ["image"]
 run = "go test -tags=e2e -count=1 -timeout=45m -v ./test/e2e -args -cluster=kumaco-e2e"
 
 [tasks."lint:deps"]

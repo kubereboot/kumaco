@@ -16,6 +16,9 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/klog/v2"
+	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/kubereboot/kumaco/test/e2e/kind"
 )
@@ -27,6 +30,8 @@ var (
 		"keep the cluster and its workloads after the run, for debugging: the next run reuses them")
 	diagnosticsDir = flag.String("diagnostics-dir", "",
 		"directory receiving the logs of the cluster when the run fails (default: a new temporary directory)")
+	imageArchive = flag.String("image-archive", "../../.tmp/image/kumaco.tar",
+		"archive of the kumaco image to deploy, as `mise run image` saves it")
 )
 
 // clusterStateDir holds one sentinel per cluster created by a run (see the
@@ -37,11 +42,14 @@ const clusterStateDir = ".clusters"
 // interrupted, and the cluster it created.
 var (
 	runContext context.Context
+	restConfig *rest.Config
 	client     kubernetes.Interface
 )
 
 func TestMain(m *testing.M) {
 	flag.Parse()
+	// The clients of controller-runtime log through this logger.
+	ctrllog.SetLogger(klog.Background())
 	os.Exit(run(m))
 }
 
@@ -78,9 +86,12 @@ func run(m *testing.M) int {
 }
 
 func runScenarios(m *testing.M, cluster *kind.Cluster) int {
-	config, err := cluster.RESTConfig()
+	var err error
+	if restConfig, err = cluster.RESTConfig(); err == nil {
+		client, err = kubernetes.NewForConfig(restConfig)
+	}
 	if err == nil {
-		client, err = kubernetes.NewForConfig(config)
+		err = deployKumaco(runContext, cluster)
 	}
 	if err != nil {
 		logf("%v", err)

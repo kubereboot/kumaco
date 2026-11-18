@@ -40,6 +40,7 @@ const (
 	createTimeout = 10 * time.Minute
 	deleteTimeout = 5 * time.Minute
 	exportTimeout = 5 * time.Minute
+	loadTimeout   = 5 * time.Minute
 
 	// controlPlaneWait is how long `kind create cluster` waits for the control
 	// plane to be ready.
@@ -259,6 +260,12 @@ func (c *Cluster) RESTConfig() (*rest.Config, error) {
 // dir. Call it before Teardown when a run fails.
 func (c *Cluster) ExportLogs(ctx context.Context, dir string) error {
 	return c.kind(ctx, exportTimeout, "export", "logs", dir, "--name", c.name)
+}
+
+// LoadImageArchive loads the images of an archive (`docker save`) into every
+// node of the cluster, so that pods run them without pulling.
+func (c *Cluster) LoadImageArchive(ctx context.Context, archive string) error {
+	return c.kind(ctx, loadTimeout, "load", "image-archive", archive, "--name", c.name)
 }
 
 // Teardown deletes the cluster and its sentinel, unless Keep was set.

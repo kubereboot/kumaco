@@ -372,6 +372,19 @@ func TestExportLogs(t *testing.T) {
 	}
 }
 
+func TestLoadImageArchive(t *testing.T) {
+	fake := noCluster()
+	cluster := mustCreate(t, fake, options(t))
+
+	if err := cluster.LoadImageArchive(t.Context(), "/images/kumaco.tar"); err != nil {
+		t.Fatalf("LoadImageArchive() error: %v", err)
+	}
+	want := "kind load image-archive /images/kumaco.tar --name " + testCluster
+	if loaded := fake.ran("kind load"); !slices.Equal(loaded, []string{want}) {
+		t.Errorf("load commands = %q, want %q", loaded, want)
+	}
+}
+
 // The run says what it will do with the cluster before it changes anything:
 // only `kind get clusters`, which tells whether the cluster is running, may
 // come first.
