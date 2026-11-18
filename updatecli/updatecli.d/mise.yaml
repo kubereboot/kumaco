@@ -1,0 +1,52 @@
+# The version of mise that the workflows install.
+name: "Bump mise in the workflows"
+
+scms:
+  default:
+    kind: github
+    spec:
+      owner: '{{ .scm.owner }}'
+      repository: '{{ .scm.repository }}'
+      branch: '{{ .scm.branch }}'
+      user: '{{ .scm.user }}'
+      email: '{{ .scm.email }}'
+      username: '{{ requiredEnv "GITHUB_ACTOR" }}'
+      token: '{{ requiredEnv "GITHUB_TOKEN" }}'
+
+actions:
+  default:
+    kind: github/pullrequest
+    scmid: default
+    title: 'ci: bump mise to {{ source "version" }}'
+    spec:
+      labels:
+        - dependencies
+
+sources:
+  version:
+    name: Get the latest release of mise
+    kind: githubrelease
+    spec:
+      owner: jdx
+      repository: mise
+      token: '{{ requiredEnv "GITHUB_TOKEN" }}'
+      versionfilter:
+        kind: regex
+        pattern: '^v\d{4}\.\d+\.\d+$'
+    transformers:
+      - trimprefix: v
+
+targets:
+  workflows:
+    name: 'Set the mise version of the workflows to {{ source "version" }}'
+    kind: file
+    scmid: default
+    sourceid: version
+    spec:
+      files:
+        - .github/workflows/checks.yaml
+        - .github/workflows/snyk.yaml
+        - .github/workflows/release.yaml
+        - .github/workflows/updatecli.yaml
+      matchpattern: '(?m)^(\s+version: )\d{4}\.\d+\.\d+$'
+      replacepattern: '${1}{{ source "version" }}'

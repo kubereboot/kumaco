@@ -1,0 +1,46 @@
+# Updatecli proposes the updates of what the repository pins: GitHub Actions,
+# Go modules, the Go toolchain, and the tools of mise.toml (AGENTS.md, "GitHub
+# Actions and maintenance automation"). It only opens pull requests: they go
+# through the same checks and reviews as any other, and nothing merges them.
+#
+# Pull requests opened with the token of a workflow do not start other
+# workflows. For the checks to run on these pull requests, give this workflow
+# a token that can (a fine-grained token or a GitHub App token, with write
+# access to contents and pull requests) as the UPDATECLI_TOKEN secret.
+name: Updatecli
+
+on:
+  schedule:
+    - cron: "41 4 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    name: mise run update:apply
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        with:
+          version: 2026.11.9
+
+      - name: mise run update:apply
+        run: mise run update:apply
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.UPDATECLI_TOKEN || secrets.GITHUB_TOKEN }}

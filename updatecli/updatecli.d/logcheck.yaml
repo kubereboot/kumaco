@@ -1,0 +1,60 @@
+# logcheck has no release binary: mise builds the version pinned here from its
+# Go module.
+name: "Bump logcheck"
+
+scms:
+  default:
+    kind: github
+    spec:
+      owner: '{{ .scm.owner }}'
+      repository: '{{ .scm.repository }}'
+      branch: '{{ .scm.branch }}'
+      user: '{{ .scm.user }}'
+      email: '{{ .scm.email }}'
+      username: '{{ requiredEnv "GITHUB_ACTOR" }}'
+      token: '{{ requiredEnv "GITHUB_TOKEN" }}'
+
+actions:
+  default:
+    kind: github/pullrequest
+    scmid: default
+    title: 'build: bump logcheck to {{ source "version" }}'
+    spec:
+      labels:
+        - dependencies
+
+sources:
+  version:
+    name: Get the latest version of the logtools module
+    kind: golang/module
+    spec:
+      module: sigs.k8s.io/logtools
+      versionfilter:
+        kind: semver
+    transformers:
+      - trimprefix: v
+
+targets:
+  mise.toml:
+    name: 'Set the logcheck version of mise to {{ source "version" }}'
+    kind: file
+    scmid: default
+    sourceid: version
+    spec:
+      file: mise.toml
+      matchpattern: '(?m)^("go:sigs\.k8s\.io/logtools/logcheck" = )".*"$'
+      replacepattern: '${1}"{{ source "version" }}"'
+  mise.lock:
+    name: Update the lockfile of mise
+    kind: shell
+    scmid: default
+    disablesourceinput: true
+    dependson:
+      - mise.toml
+    spec:
+      command: sh updatecli/mise-lock.sh
+      changedif:
+        kind: file/checksum
+        spec:
+          files:
+            - mise.lock

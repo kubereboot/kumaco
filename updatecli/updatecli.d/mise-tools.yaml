@@ -1,0 +1,72 @@
+# The tools of mise.toml that are released on GitHub: one pull request per
+# tool, with the lockfile. The list is in updatecli/values.yaml.
+{{- range $index, $tool := .tools }}
+{{- if $index }}
+---
+{{- end }}
+name: "Bump {{ $tool.name }}"
+
+scms:
+  default:
+    kind: github
+    spec:
+      owner: '{{ $.scm.owner }}'
+      repository: '{{ $.scm.repository }}'
+      branch: '{{ $.scm.branch }}'
+      user: '{{ $.scm.user }}'
+      email: '{{ $.scm.email }}'
+      username: '{{ requiredEnv "GITHUB_ACTOR" }}'
+      token: '{{ requiredEnv "GITHUB_TOKEN" }}'
+
+actions:
+  default:
+    kind: github/pullrequest
+    scmid: default
+    title: 'build: bump {{ $tool.name }} to {{ source "version" }}'
+    spec:
+      labels:
+        - dependencies
+
+sources:
+  version:
+    name: Get the latest release of {{ $tool.name }}
+    kind: githubrelease
+    spec:
+      owner: '{{ $tool.owner }}'
+      repository: '{{ $tool.repository }}'
+      token: '{{ requiredEnv "GITHUB_TOKEN" }}'
+      versionfilter:
+        {{- if $tool.tagPattern }}
+        kind: regex
+        pattern: '{{ $tool.tagPattern }}'
+        {{- else }}
+        kind: semver
+        {{- end }}
+    transformers:
+      - trimprefix: '{{ $tool.prefix }}'
+
+targets:
+  mise.toml:
+    name: 'Set the {{ $tool.name }} version of mise to {{ source "version" }}'
+    kind: file
+    scmid: default
+    sourceid: version
+    spec:
+      file: mise.toml
+      matchpattern: '(?m)^({{ $tool.line }})".*"$'
+      replacepattern: '${1}"{{ source "version" }}"'
+  mise.lock:
+    name: Update the lockfile of mise
+    kind: shell
+    scmid: default
+    disablesourceinput: true
+    dependson:
+      - mise.toml
+    spec:
+      command: sh updatecli/mise-lock.sh
+      changedif:
+        kind: file/checksum
+        spec:
+          files:
+            - mise.lock
+{{- end }}

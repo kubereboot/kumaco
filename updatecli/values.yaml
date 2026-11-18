@@ -1,0 +1,78 @@
+# Values of the Updatecli manifests (updatecli/updatecli.d): where the update
+# pull requests go, and the tools that mise pins.
+scm:
+  owner: kubereboot
+  repository: kumaco
+  branch: main
+  user: updatecli
+  email: updatecli@users.noreply.github.com
+
+# The tools of mise.toml whose releases are GitHub releases. `line` is the
+# text before the version in mise.toml; `prefix` is what the release tag has
+# before the version; `tagPattern` selects the tags when they are not plain
+# SemVer tags.
+tools:
+  - name: golangci-lint
+    owner: golangci
+    repository: golangci-lint
+    line: 'golangci-lint = '
+    prefix: v
+  - name: kustomize
+    owner: kubernetes-sigs
+    repository: kustomize
+    line: 'kustomize = '
+    prefix: kustomize/v
+    tagPattern: '^kustomize/v\d+\.\d+\.\d+$'
+  - name: helm
+    owner: helm
+    repository: helm
+    line: 'helm = '
+    prefix: v
+  - name: trivy
+    owner: aquasecurity
+    repository: trivy
+    line: 'trivy = '
+    prefix: v
+  - name: snyk
+    owner: snyk
+    repository: cli
+    line: 'snyk = '
+    prefix: v
+  - name: goreleaser
+    owner: goreleaser
+    repository: goreleaser
+    line: 'goreleaser = '
+    prefix: v
+  - name: cosign
+    owner: sigstore
+    repository: cosign
+    line: 'cosign = '
+    prefix: v
+  - name: syft
+    owner: anchore
+    repository: syft
+    line: 'syft = '
+    prefix: v
+  - name: actionlint
+    owner: rhysd
+    repository: actionlint
+    line: 'actionlint = '
+    prefix: v
+  - name: updatecli
+    owner: updatecli
+    repository: updatecli
+    line: 'updatecli = '
+    prefix: v
+  - name: controller-gen
+    owner: kubernetes-sigs
+    repository: controller-tools
+    line: '\[tools\."http:controller-gen"\]\nversion = '
+    prefix: v
+  # The envtest control plane follows the supported Kubernetes minor release:
+  # the tests fail when it is not the release of the client libraries.
+  - name: envtest
+    owner: kubernetes-sigs
+    repository: controller-tools
+    line: '\[tools\."http:envtest"\]\nversion = '
+    prefix: envtest-v
+    tagPattern: '^envtest-v\d+\.\d+\.\d+$'

@@ -1,0 +1,37 @@
+# The other direct Go modules: one pull request per module. The Kubernetes
+# modules and the Go version have their own manifests.
+name: "Bump Go modules"
+
+scms:
+  default:
+    kind: github
+    spec:
+      owner: '{{ .scm.owner }}'
+      repository: '{{ .scm.repository }}'
+      branch: '{{ .scm.branch }}'
+      user: '{{ .scm.user }}'
+      email: '{{ .scm.email }}'
+      username: '{{ requiredEnv "GITHUB_ACTOR" }}'
+      token: '{{ requiredEnv "GITHUB_TOKEN" }}'
+
+actions:
+  default:
+    kind: github/pullrequest
+    scmid: default
+    spec:
+      labels:
+        - dependencies
+
+autodiscovery:
+  scmid: default
+  actionid: default
+  groupby: individual
+  crawlers:
+    golang/gomod:
+      onlygomodule: true
+      ignore:
+        - modules:
+            "k8s.io/*": ""
+            "sigs.k8s.io/controller-runtime": ""
+      versionfilter:
+        kind: semver

@@ -16,6 +16,9 @@ golangci-lint = "2.15.0"
 goreleaser = "2.20.2"
 cosign = "3.1.4"
 syft = "1.57.2"
+# Proposes the updates of all these pins, of the Go modules and of the GitHub
+# Actions (mise run update:diff, update:apply).
+updatecli = "0.123.0"
 # Checks the GitHub Actions workflows (mise run lint).
 actionlint = "1.7.12"
 # Security scans (mise run scan:trivy, scan:snyk).
@@ -175,6 +178,18 @@ run = """
 test -n "${GITHUB_TOKEN:-}" || { echo "release:publish: GITHUB_TOKEN is not set: only the tag workflow publishes releases"; exit 1; }
 GO_VERSION="$(go env GOVERSION)" goreleaser release --config .config/goreleaser.yaml --clean
 """
+
+[tasks."update:diff"]
+# It reads the repository on GitHub, not this working tree, and needs
+# GITHUB_TOKEN and GITHUB_ACTOR to query the GitHub API. It changes nothing.
+description = "Show the dependency updates that Updatecli would propose"
+run = "updatecli pipeline diff --config updatecli/updatecli.d --values updatecli/values.yaml"
+
+[tasks."update:apply"]
+# Only the Updatecli workflow runs this: it pushes branches and opens pull
+# requests, which go through the same checks and reviews as any other.
+description = "Open pull requests for the dependency updates (Updatecli workflow only)"
+run = "updatecli pipeline apply --config updatecli/updatecli.d --values updatecli/values.yaml"
 
 [tasks."lint:deps"]
 description = "Dependency-policy gate: direct modules, imports, and exception reviews"

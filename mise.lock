@@ -527,3 +527,50 @@ checksum = "sha256:691f737a7e5566a673c3a74dab9160552ec32101e953b659e5c77443d16dd
 url = "https://github.com/aquasecurity/trivy/releases/download/v0.76.2/trivy_0.76.2_windows-64bit.zip"
 url_api = "https://api.github.com/repos/aquasecurity/trivy/releases/assets/713401033"
 provenance = "cosign"
+
+[[tools.updatecli]]
+version = "0.123.0"
+backend = "aqua:updatecli/updatecli"
+specifiers = ["0.123.0"]
+
+[tools.updatecli."platforms.linux-arm64"]
+checksum = "sha256:b3b687844062761201f0189103dbe108089692ca77e865894b2f2b546f8daf6d"
+url = "https://github.com/updatecli/updatecli/releases/download/v0.123.0/updatecli_Linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/updatecli/updatecli/releases/assets/664983483"
+provenance = "github-attestations"
+
+[tools.updatecli."platforms.linux-arm64-musl"]
+checksum = "sha256:b3b687844062761201f0189103dbe108089692ca77e865894b2f2b546f8daf6d"
+url = "https://github.com/updatecli/updatecli/releases/download/v0.123.0/updatecli_Linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/updatecli/updatecli/releases/assets/664983483"
+provenance = "github-attestations"
+
+[tools.updatecli."platforms.linux-x64"]
+checksum = "sha256:a0cc40caee73c6efb217762a94ab90ef57617b651409d0077524f13cc07e0760"
+url = "https://github.com/updatecli/updatecli/releases/download/v0.123.0/updatecli_Linux_x86_64.tar.gz"
+url_api = "https://api.github.com/repos/updatecli/updatecli/releases/assets/664983377"
+provenance = "github-attestations"
+
+[tools.updatecli."platforms.linux-x64-musl"]
+checksum = "sha256:a0cc40caee73c6efb217762a94ab90ef57617b651409d0077524f13cc07e0760"
+url = "https://github.com/updatecli/updatecli/releases/download/v0.123.0/updatecli_Linux_x86_64.tar.gz"
+url_api = "https://api.github.com/repos/updatecli/updatecli/releases/assets/664983377"
+provenance = "github-attestations"
+
+[tools.updatecli."platforms.macos-arm64"]
+checksum = "sha256:0d8b311f6a7bd4a53df439f29fe2372457d5eee2795872574c615cb8c3888d06"
+url = "https://github.com/updatecli/updatecli/releases/download/v0.123.0/updatecli_Darwin_arm64.tar.gz"
+url_api = "https://api.github.com/repos/updatecli/updatecli/releases/assets/664983386"
+provenance = "github-attestations"
+
+[tools.updatecli."platforms.macos-x64"]
+checksum = "sha256:0ebd4b303e83e1945495953a855fcdd43f2ee39b7b5529acb2415a730148bbbb"
+url = "https://github.com/updatecli/updatecli/releases/download/v0.123.0/updatecli_Darwin_x86_64.tar.gz"
+url_api = "https://api.github.com/repos/updatecli/updatecli/releases/assets/664983482"
+provenance = "github-attestations"
+
+[tools.updatecli."platforms.windows-x64"]
+checksum = "sha256:a4b4978da6487a21a64c5a2607b6c650d5cceeaa950723ff83b6c5d7264c08e7"
+url = "https://github.com/updatecli/updatecli/releases/download/v0.123.0/updatecli_Windows_x86_64.zip"
+url_api = "https://api.github.com/repos/updatecli/updatecli/releases/assets/664983387"
+provenance = "github-attestations"

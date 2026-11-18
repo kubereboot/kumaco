@@ -26,6 +26,7 @@ e2e suite (see below).
 | `mise run scan:snyk` | Snyk dependency and license scan. CI only. | `SNYK_TOKEN`: it fails without it. |
 | `mise run release:check` | Validates the GoReleaser configuration (`.config/goreleaser.yaml`). | Nothing. |
 | `mise run release:snapshot` | A preview of a release, publishing and signing nothing: binaries, SBOMs and images for linux/amd64 and linux/arm64 (in `dist/` and the local container engine), and the CRD, kustomize manifests and Helm chart (in `.tmp/release/`). | Docker with Buildx. |
+| `mise run update:diff` | The dependency updates that Updatecli would propose (`updatecli/`), without changing anything. It reads the repository on GitHub. | `GITHUB_TOKEN` and `GITHUB_ACTOR`, and network access. |
 
 A missing prerequisite fails a task. It never skips tests.
 

@@ -1,0 +1,83 @@
+# kind and the node image of the e2e cluster move together: the image must be
+# the default node image of the kind release, pinned by digest. That image
+# provides the only supported Kubernetes minor release.
+name: "Bump kind and its node image"
+
+scms:
+  default:
+    kind: github
+    spec:
+      owner: '{{ .scm.owner }}'
+      repository: '{{ .scm.repository }}'
+      branch: '{{ .scm.branch }}'
+      user: '{{ .scm.user }}'
+      email: '{{ .scm.email }}'
+      username: '{{ requiredEnv "GITHUB_ACTOR" }}'
+      token: '{{ requiredEnv "GITHUB_TOKEN" }}'
+
+actions:
+  default:
+    kind: github/pullrequest
+    scmid: default
+    title: 'build: bump kind to {{ source "kind" }}'
+    spec:
+      labels:
+        - dependencies
+
+sources:
+  kind:
+    name: Get the latest kind release
+    kind: githubrelease
+    spec:
+      owner: kubernetes-sigs
+      repository: kind
+      token: '{{ requiredEnv "GITHUB_TOKEN" }}'
+      versionfilter:
+        kind: semver
+    transformers:
+      - trimprefix: v
+  image:
+    name: Get the default node image of that kind release
+    kind: shell
+    dependson:
+      - kind
+    spec:
+      # The default image is a constant of kind's sources.
+      command: >-
+        curl --fail --silent --show-error
+        https://raw.githubusercontent.com/kubernetes-sigs/kind/v{{ source "kind" }}/pkg/apis/config/defaults/image.go
+        | grep --only-matching 'kindest/node:v[0-9.]*@sha256:[0-9a-f]*'
+
+targets:
+  mise.toml:
+    name: 'Set the kind version of mise to {{ source "kind" }}'
+    kind: file
+    scmid: default
+    sourceid: kind
+    spec:
+      file: mise.toml
+      matchpattern: '(?m)^kind = ".*"$'
+      replacepattern: 'kind = "{{ source "kind" }}"'
+  kind.yaml:
+    name: 'Set the node image to {{ source "image" }}'
+    kind: file
+    scmid: default
+    sourceid: image
+    spec:
+      file: test/e2e/kind.yaml
+      matchpattern: 'kindest/node:\S+'
+      replacepattern: '{{ source "image" }}'
+  mise.lock:
+    name: Update the lockfile of mise
+    kind: shell
+    scmid: default
+    disablesourceinput: true
+    dependson:
+      - mise.toml
+    spec:
+      command: sh updatecli/mise-lock.sh
+      changedif:
+        kind: file/checksum
+        spec:
+          files:
+            - mise.lock
