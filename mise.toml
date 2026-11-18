@@ -22,8 +22,40 @@ checksum_url = 'https://github.com/kubernetes-sigs/controller-tools/releases/dow
 # match against the archive name: take the hash, its first field.
 checksum_expr = '"sha512:" + split(body, " ")[0]'
 
+# Generates the deepcopy code, the CRD, and the RBAC role (mise run generate).
+[tools."http:controller-gen"]
+version = "0.23.0"
+url = 'https://github.com/kubernetes-sigs/controller-tools/releases/download/v{{ version }}/controller-gen-{{ os(macos="darwin") }}-{{ arch(x64="amd64") }}'
+bin = "controller-gen"
+
 # Tasks: the names are fixed by AGENTS.md ("Standard tasks"). CI runs the same
 # tasks.
+
+[tasks.fmt]
+description = "Format the code in place"
+run = "gofmt -w ."
+
+[tasks.lint]
+description = "Check formatting and run go vet, on every build-tag variant"
+run = [
+  'unformatted="$(gofmt -l .)"; test -z "$unformatted" || { echo "not formatted (mise run fmt):"; echo "$unformatted"; exit 1; }',
+  "go vet ./...",
+  "go vet -tags=envtest ./...",
+  "go vet -tags=e2e ./...",
+]
+
+[tasks.generate]
+description = "Regenerate the deepcopy code, the CRD, and the RBAC role"
+run = "controller-gen object crd rbac:roleName=kumaco paths=./... output:crd:artifacts:config=config/crd/bases output:rbac:artifacts:config=config/rbac"
+
+[tasks."generate:check"]
+description = "Run generate and fail if it changed the working tree"
+run = """
+state() { git status --porcelain; git diff; }
+before="$(state)"
+mise run generate
+test "$before" = "$(state)" || { echo "generate:check: mise run generate changed the working tree: commit its output"; exit 1; }
+"""
 
 [tasks.test]
 description = "Unit tests"

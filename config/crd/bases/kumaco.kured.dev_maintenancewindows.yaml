@@ -1,0 +1,206 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.23.0
+  name: maintenancewindows.kumaco.kured.dev
+spec:
+  group: kumaco.kured.dev
+  names:
+    kind: MaintenanceWindow
+    listKind: MaintenanceWindowList
+    plural: maintenancewindows
+    singular: maintenancewindow
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: MaintenanceWindow is the Schema for the maintenancewindows API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              MaintenanceWindowSpec declares when, on which nodes, and under which
+              conditions a kind of maintenance may be in progress. See README.md, "The
+              kumaco.kured.dev MaintenanceWindow CRD".
+            properties:
+              concurrency:
+                description: |-
+                  concurrency is the maximum number of nodes, among the nodes this window
+                  selects, under its kind of maintenance at the same time. 0 pauses the
+                  window.
+                format: int32
+                maximum: 1000
+                minimum: 0
+                type: integer
+              conditionType:
+                description: |-
+                  conditionType is the kind of maintenance of this window, as the type of
+                  the node condition that is True while it is in progress on a node. It
+                  must start with the controller's reserved prefix.
+                maxLength: 316
+                pattern: ^kumaco\.kured\.dev/[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$
+                type: string
+              duration:
+                description: |-
+                  duration is how long each occurrence lasts: the window is active in
+                  [start, start+duration). A Go duration string, from 1m to 744h.
+                maxLength: 64
+                type: string
+                x-kubernetes-validations:
+                - message: duration must be a duration from 1m to 744h (31 days)
+                  rule: duration(self) >= duration('1m') && duration(self) <= duration('744h')
+              nodeSelector:
+                description: |-
+                  nodeSelector selects the nodes the window applies to, among the nodes the
+                  controller manages. An empty selector selects all of them.
+                properties:
+                  matchExpressions:
+                    description: matchExpressions is a list of label selector requirements.
+                      The requirements are ANDed.
+                    items:
+                      description: |-
+                        A label selector requirement is a selector that contains values, a key, and an operator that
+                        relates the key and values.
+                      properties:
+                        key:
+                          description: key is the label key that the selector applies
+                            to.
+                          type: string
+                        operator:
+                          description: |-
+                            operator represents a key's relationship to a set of values.
+                            Valid operators are In, NotIn, Exists and DoesNotExist.
+                          type: string
+                        values:
+                          description: |-
+                            values is an array of string values. If the operator is In or NotIn,
+                            the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                            the values array must be empty. This array is replaced during a strategic
+                            merge patch.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                      required:
+                      - key
+                      - operator
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  matchLabels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                      map is equivalent to an element of matchExpressions, whose key field is "key", the
+                      operator is "In", and the values array contains only "value". The requirements are ANDed.
+                    type: object
+                type: object
+                x-kubernetes-map-type: atomic
+              startTime:
+                description: |-
+                  startTime says when the occurrences of the window start, as a Quartz cron
+                  expression with an optional time zone prefix:
+                  "[CRON_TZ=<IANA time zone> ]<second> <minute> <hour> <day of month> <month> <day of week> <year>".
+                  The controller validates its grammar.
+                maxLength: 256
+                minLength: 1
+                type: string
+              startTriggers:
+                description: |-
+                  startTriggers are CEL expressions that must all be true for maintenance
+                  to start on a node.
+                items:
+                  maxLength: 4096
+                  type: string
+                maxItems: 16
+                type: array
+                x-kubernetes-list-type: atomic
+              stopTriggers:
+                description: |-
+                  stopTriggers are CEL expressions of which any being true makes the window
+                  stop keeping a node under maintenance.
+                items:
+                  maxLength: 4096
+                  type: string
+                maxItems: 16
+                type: array
+                x-kubernetes-list-type: atomic
+            required:
+            - concurrency
+            - conditionType
+            - duration
+            - nodeSelector
+            - startTime
+            type: object
+          status:
+            description: |-
+              MaintenanceWindowStatus is a report: the controller writes it and never
+              reads it back.
+            properties:
+              matchingNodes:
+                description: matchingNodes is the number of managed nodes matching
+                  nodeSelector.
+                format: int32
+                type: integer
+              message:
+                description: message says, for humans, why the window is Invalid.
+                type: string
+              nodeCounts:
+                additionalProperties:
+                  format: int32
+                  type: integer
+                description: |-
+                  nodeCounts says, while the window is InProgress, how many matching nodes
+                  are UnderMaintenance, UnmetTrigger, or MaxConcurrencyReached.
+                type: object
+              nodesUnderMaintenance:
+                description: |-
+                  nodesUnderMaintenance names the nodes this window selects that are under
+                  its kind of maintenance.
+                items:
+                  type: string
+                maxItems: 1000
+                type: array
+                x-kubernetes-list-type: set
+              observedGeneration:
+                description: observedGeneration is the metadata.generation this status
+                  was computed from.
+                format: int64
+                type: integer
+              state:
+                description: 'state summarizes the window: InProgress, Scheduled,
+                  Closed, or Invalid.'
+                enum:
+                - InProgress
+                - Scheduled
+                - Closed
+                - Invalid
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

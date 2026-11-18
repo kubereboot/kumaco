@@ -14,6 +14,8 @@ e2e suite (see below).
 | `mise run test:envtest` | Unit tests and the envtest suite. | Nothing: mise installs the control-plane binaries. |
 | `mise run e2e` | Kind e2e suite. | Docker or Podman, and network access to pull the node image. |
 | `mise run lint:contracts` | The links between `README.md` and the tests. | Nothing. |
+| `mise run lint` | Formatting and `go vet`. | Nothing. |
+| `mise run generate:check` | `mise run generate`, failing if the generated code or manifests were not up to date. | Nothing. |
 
 A missing prerequisite fails a task. It never skips tests.
 

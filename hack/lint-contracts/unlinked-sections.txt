@@ -10,7 +10,6 @@ informative #kumaco---kubernetes-maintenance-controller Title and table of conte
 informative #introduction Overview of the project and of the Kured v2 architecture.
 informative #behaviour Heading only: its subsections hold the contracts.
 informative #the-personas Defines the two personas; their access rights are in "Security and access rights".
-pending #the-kumacokureddev-maintenancewindow-crd The MaintenanceWindow CRD is not implemented yet.
 pending #cel-triggers CEL triggers are not implemented yet.
 pending #time-zones The startTime parser is not implemented yet.
 pending #what-does-it-reconcile-and-when The controller is not implemented yet.
@@ -40,7 +39,6 @@ informative #explanation-of-interconnection-with-kured Rationale: the behaviour 
 pending #configuration The controller and its flags are not implemented yet.
 pending #api-request-rate The controller and its scale benchmark are not implemented yet.
 informative #compatibility Heading only: its subsections hold the contracts.
-pending #api-versions The MaintenanceWindow CRD is not implemented yet.
 informative #public-contracts Lists the contracts that the other sections define, and the release policy for them.
 pending #metrics The controller is not implemented yet.
 pending #gotchas The controller is not implemented yet.

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -47,6 +48,18 @@ func checkAssets(dir string) error {
 			return fmt.Errorf("%s=%s has no %s binary (%w): install the pinned envtest binaries with `mise install`",
 				assetsEnv, dir, binary, err)
 		}
+	}
+	return nil
+}
+
+// InstallCRD installs the generated MaintenanceWindow CRD in the control plane,
+// and waits until the API server serves it.
+func InstallCRD(config *rest.Config) error {
+	_, thisFile, _, _ := runtime.Caller(0)
+	bases := filepath.Join(filepath.Dir(thisFile), "..", "..", "config", "crd", "bases")
+	_, err := envtest.InstallCRDs(config, envtest.CRDInstallOptions{Paths: []string{bases}, ErrorIfPathMissing: true})
+	if err != nil {
+		return fmt.Errorf("installing the CRD of %s: %w", bases, err)
 	}
 	return nil
 }

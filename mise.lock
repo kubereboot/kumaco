@@ -35,6 +35,33 @@ url = "https://dl.google.com/go/go1.27.4.darwin-amd64.tar.gz"
 checksum = "sha256:178ab98950ac69ab25069307dc6ade79f3816e414cce95b4da166a115cde1e7e"
 url = "https://dl.google.com/go/go1.27.4.windows-amd64.zip"
 
+[[tools."http:controller-gen"]]
+version = "0.23.0"
+backend = "http:controller-gen"
+specifiers = ["0.23.0"]
+
+[tools."http:controller-gen"."platforms.linux-arm64"]
+url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.23.0/controller-gen-linux-arm64"
+
+[tools."http:controller-gen"."platforms.linux-arm64-musl"]
+url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.23.0/controller-gen-linux-arm64"
+
+[tools."http:controller-gen"."platforms.linux-x64"]
+checksum = "blake3:aedb62284c0740ce2ba43dd3d94adb02307256f228caa2a8b1ab32a037e1d89f"
+url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.23.0/controller-gen-linux-amd64"
+
+[tools."http:controller-gen"."platforms.linux-x64-musl"]
+url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.23.0/controller-gen-linux-amd64"
+
+[tools."http:controller-gen"."platforms.macos-arm64"]
+url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.23.0/controller-gen-darwin-arm64"
+
+[tools."http:controller-gen"."platforms.macos-x64"]
+url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.23.0/controller-gen-darwin-amd64"
+
+[tools."http:controller-gen"."platforms.windows-x64"]
+url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v0.23.0/controller-gen-windows-amd64"
+
 [[tools."http:envtest"]]
 version = "1.37.0"
 backend = "http:envtest"
