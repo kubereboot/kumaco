@@ -1,0 +1,8 @@
+{{- if .Values.crd.install }}
+{{- /* generated/crd.yaml is copied from config/crd/bases by `mise run generate`. */}}
+{{- $crd := .Files.Get "generated/crd.yaml" | fromYaml }}
+{{- if .Values.crd.keep }}
+{{- $_ := set $crd.metadata.annotations "helm.sh/resource-policy" "keep" }}
+{{- end }}
+{{ toYaml $crd }}
+{{- end }}

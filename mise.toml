@@ -12,6 +12,9 @@ go = "1.27.4"
 kind = "0.33.0"
 # Only runs the cognitive-complexity linter: see .golangci.yml.
 golangci-lint = "2.15.0"
+# Render and check the deployment manifests.
+kustomize = "5.8.3"
+helm = "4.3.2"
 # Kubernetes' checker of logging calls. It has no release binary: mise builds
 # this exact version from source.
 "go:sigs.k8s.io/logtools/logcheck" = "0.11.0"
@@ -54,8 +57,13 @@ run = [
 ]
 
 [tasks.generate]
-description = "Regenerate the deepcopy code, the CRD, and the RBAC role"
-run = "controller-gen object crd rbac:roleName=kumaco paths=./... output:crd:artifacts:config=config/crd/bases output:rbac:artifacts:config=config/rbac"
+description = "Regenerate the deepcopy code, the CRD, and the RBAC role, for the kustomize manifests and the Helm chart"
+run = [
+  "controller-gen object crd rbac:roleName=kumaco paths=./... output:crd:artifacts:config=config/crd/bases output:rbac:artifacts:config=config/rbac",
+  # The Helm chart is rendered from the same CRD and role as the kustomize manifests.
+  "cp config/crd/bases/kumaco.kured.dev_maintenancewindows.yaml charts/kumaco/generated/crd.yaml",
+  "cp config/rbac/role.yaml charts/kumaco/generated/role.yaml",
+]
 
 [tasks."generate:check"]
 description = "Run generate and fail if it changed the working tree"
@@ -85,6 +93,21 @@ run = [
 [tasks."test:envtest"]
 description = "envtest suite: tests against a real kube-apiserver and etcd"
 run = 'KUBEBUILDER_ASSETS="$(mise where http:envtest)/envtest" go test -tags=envtest -count=1 ./...'
+
+[tasks.image]
+# The same Dockerfile as the release, for this machine's architecture only.
+# CONTAINER_TOOL defaults to the provider kind uses.
+description = "Build the kumaco image as ghcr.io/kubereboot/kumaco:dev, and save it in .tmp/image/kumaco.tar"
+run = """
+set -eu
+tool="${CONTAINER_TOOL:-${KIND_EXPERIMENTAL_PROVIDER:-docker}}"
+arch="$(go env GOARCH)"
+rm -rf .tmp/image
+mkdir -p ".tmp/image/linux/$arch"
+CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags='-s -w' -o ".tmp/image/linux/$arch/kumaco" ./cmd
+"$tool" build --platform "linux/$arch" --build-arg "TARGETPLATFORM=linux/$arch" --tag ghcr.io/kubereboot/kumaco:dev --file Dockerfile .tmp/image
+"$tool" save --output .tmp/image/kumaco.tar ghcr.io/kubereboot/kumaco:dev
+"""
 
 [tasks.e2e]
 # The tests require a cluster name: this task designates kumaco-e2e. mise

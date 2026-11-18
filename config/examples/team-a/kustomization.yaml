@@ -1,0 +1,57 @@
+# One kumaco controller per team (README.md, "Multi-tenancy while doing
+# self-service is not an afterthought"): copy this overlay for each team. It
+# deploys a second controller next to others, without the CRD, which
+# config/default or config/crd installs once.
+#
+# This controller:
+# - is named kumaco-team-a, as is its leader-election Lease;
+# - manages the nodes labelled team=a, and the windows labelled
+#   MaintenanceWindowTeam=A;
+# - can only write the status of the nodes that its ClusterRole names (RBAC
+#   cannot restrict writes by node label): keep the list in sync with the
+#   nodes of the team, and never grant a node to two controllers.
+namespace: kube-system
+nameSuffix: -team-a
+resources:
+  - ../../rbac
+  - ../../manager
+labels:
+  - pairs:
+      app.kubernetes.io/instance: kumaco-team-a
+    includeSelectors: true
+patches:
+  - target:
+      kind: Deployment
+      name: kumaco
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/args/1
+        value: --controller-name=kumaco-team-a
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --node-selector=team=a
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --window-label-selector=MaintenanceWindowTeam=A
+  # The second rule of the generated ClusterRole is the one for nodes/status.
+  - target:
+      kind: ClusterRole
+      name: kumaco
+    patch: |-
+      - op: test
+        path: /rules/1/resources
+        value: ["nodes/status"]
+      - op: add
+        path: /rules/1/resourceNames
+        value: ["team-a-node-1", "team-a-node-2"]
+  # The Lease is named after the controller.
+  - target:
+      kind: Role
+      name: kumaco-leader-election
+    patch: |-
+      - op: test
+        path: /rules/1/resourceNames
+        value: ["kumaco"]
+      - op: replace
+        path: /rules/1/resourceNames
+        value: ["kumaco-team-a"]

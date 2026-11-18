@@ -1,0 +1,11 @@
+# kumaco, with its CRD, in the kube-system namespace: one controller managing
+# all the nodes and all the MaintenanceWindows of the cluster.
+#
+#   kustomize build config/default | kubectl apply --server-side -f -
+#
+# For one controller per team, see config/examples/team-a.
+namespace: kube-system
+resources:
+  - ../crd
+  - ../rbac
+  - ../manager

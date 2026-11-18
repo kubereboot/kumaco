@@ -1,0 +1,21 @@
+# The Lease of the leader election is named after --controller-name. Access is
+# limited to that Lease: the namespace also holds the Leases of the control
+# plane. Creation cannot be limited to a name.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kumaco-leader-election
+  labels:
+    app.kubernetes.io/name: kumaco
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    resourceNames: ["kumaco"]
+    verbs: ["get", "update"]
+  # The leader election records its transitions as events on the Lease.
+  - apiGroups: ["", "events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create", "patch"]

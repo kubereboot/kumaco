@@ -1,0 +1,10 @@
+# Bind this role to what scrapes the metrics of kumaco.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kumaco-metrics-reader
+  labels:
+    app.kubernetes.io/name: kumaco
+rules:
+  - nonResourceURLs: ["/metrics"]
+    verbs: ["get"]

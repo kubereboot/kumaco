@@ -1,0 +1,78 @@
+# The values of this chart are a public contract of kumaco (README.md,
+# "Compatibility").
+
+# namespace is where kumaco is deployed, whatever the namespace of the release.
+namespace: kube-system
+
+# nameOverride replaces the name of the objects of this chart, which is
+# otherwise the name of the release.
+nameOverride: ""
+
+image:
+  repository: ghcr.io/kubereboot/kumaco
+  # tag defaults to the appVersion of the chart: the release it was published with.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# replicas of the same controller share a leader-election Lease: only the
+# leader reconciles and writes.
+replicas: 1
+
+# controller holds the flags of README.md, "Configuration".
+controller:
+  # name of this controller: the name of its leader-election Lease, and the
+  # source of its events. It defaults to the name of the objects of the chart.
+  # Controllers for different teams need different names.
+  name: ""
+  # nodeSelector is the label selector of the nodes this controller manages
+  # (--node-selector). Empty: all nodes, which is only safe with one controller.
+  nodeSelector: ""
+  # windowLabelSelector is the label selector of the MaintenanceWindows this
+  # controller reconciles (--window-label-selector). Empty: all windows.
+  windowLabelSelector: ""
+  conditionPrefix: kumaco.kured.dev/
+  heartbeatInterval: 5m
+  kubeAPIQPS: 50
+  kubeAPIBurst: 100
+  # extraArgs are added to the command line, for example the --zap-* flags.
+  extraArgs: []
+
+crd:
+  # install the MaintenanceWindow CRD. Only one release per cluster does:
+  # set it to false in the releases of the other teams.
+  install: true
+  # keep the CRD, and so the MaintenanceWindows, when the release is uninstalled.
+  keep: true
+
+rbac:
+  # nodeNames restricts the node status writes of the controller to these
+  # nodes (README.md, "The harder approach: the service-account limitations").
+  # Empty: all nodes. Never grant a node to two controllers.
+  nodeNames: []
+
+metrics:
+  # enabled serves the metrics over HTTPS on this port, to authenticated and
+  # authorized clients: bind the metrics-reader ClusterRole to your scraper.
+  enabled: true
+  port: 8443
+
+# extraEnv, extraVolumes and extraVolumeMounts give the container what it needs
+# beyond its image, for example a newer time zone database (README.md, "Time
+# zones"): a ConfigMap holding zoneinfo.zip, mounted, and ZONEINFO set to it.
+extraEnv: []
+extraVolumes: []
+extraVolumeMounts: []
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+podAnnotations: {}
+podLabels: {}
+priorityClassName: ""
+# nodeSelector, tolerations and affinity place the pods of kumaco.
+nodeSelector: {}
+tolerations: []
+affinity: {}

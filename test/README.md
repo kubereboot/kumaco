@@ -12,8 +12,9 @@ e2e suite (see below).
 | `mise run test` | Unit tests. | Nothing. |
 | `mise run test:race` | Unit tests with the race detector. | A C compiler. |
 | `mise run test:fuzz` | Fuzz tests of the parsers, 30 seconds each. | Nothing. |
-| `mise run test:envtest` | Unit tests and the envtest suite. | Nothing: mise installs the control-plane binaries. |
-| `mise run e2e` | Kind e2e suite. | Docker or Podman, and network access to pull the node image. |
+| `mise run test:envtest` | Unit tests and the envtest suite, including the rendering of the kustomize manifests and of the Helm chart. | Nothing: mise installs the control-plane binaries, `kustomize` and `helm`. |
+| `mise run image` | Builds the kumaco image for this machine, as `ghcr.io/kubereboot/kumaco:dev`. | Docker or Podman (`CONTAINER_TOOL`, by default the provider of kind). |
+| `mise run e2e` | Kind e2e suite, after `mise run image`. | Docker or Podman, and network access to pull the node image. |
 | `mise run lint:contracts` | The links between `README.md` and the tests. | Nothing. |
 | `mise run lint:deps` | The dependency policy: direct modules, imports, and the reviews of the exceptions in `hack/lint-deps/exceptions.json`. | Nothing. |
 | `mise run lint:complexity` | The cognitive complexity of every function, at most 15 (`gocognit`, through golangci-lint). | Nothing. |
@@ -84,6 +85,12 @@ mise run e2e -- -cluster=other-name    # use another cluster name
   that this kubeconfig reaches the nodes of its kind cluster.
 - **A failed run exports the logs of the cluster** (`kind export logs`) before the teardown,
   into a new temporary directory, or into `-diagnostics-dir=<dir>`. It prints the path.
+
+**The run provisions kumaco**: it loads the image that `mise run image` built into the nodes,
+and deploys it with the Helm chart of the repository, with two replicas. Nothing is pulled
+from a registry. Kured and its reporters are not deployed yet: the scenarios publish the
+conditions that triggers read themselves, and the Kured compatibility gate of AGENTS.md is
+not met (see `hack/lint-contracts/unlinked-sections.txt`).
 
 The cluster is described by `test/e2e/kind.yaml`. Its node image is the default image of the
 pinned kind release, by digest: bump both together.

@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kumaco
+  labels:
+    app.kubernetes.io/name: kumaco
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kumaco
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kumaco
+      annotations:
+        kubectl.kubernetes.io/default-container: kumaco
+    spec:
+      serviceAccountName: kumaco
+      terminationGracePeriodSeconds: 10
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: kumaco
+          # The release sets the tag: there is no floating tag.
+          image: ghcr.io/kubereboot/kumaco:dev
+          args:
+            - --leader-elect
+            - --controller-name=kumaco
+            - --metrics-bind-address=:8443
+            - --health-probe-bind-address=:8081
+            # Production logging: JSON, without the debug level.
+            - --zap-devel=false
+          ports:
+            - name: metrics
+              containerPort: 8443
+              protocol: TCP
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

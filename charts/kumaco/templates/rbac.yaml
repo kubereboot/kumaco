@@ -1,0 +1,113 @@
+{{- /* generated/role.yaml is copied from config/rbac by `mise run generate`:
+       the rules come from the markers of the controller. */}}
+{{- $generated := .Files.Get "generated/role.yaml" | fromYaml }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kumaco.name" . }}
+  labels:
+    {{- include "kumaco.labels" . | nindent 4 }}
+rules:
+  {{- range $rule := $generated.rules }}
+  {{- if and $.Values.rbac.nodeNames (has "nodes/status" $rule.resources) }}
+  {{- /* RBAC cannot restrict writes by node label, only by node name. */}}
+  {{- $rule = merge (dict "resourceNames" $.Values.rbac.nodeNames) $rule }}
+  {{- end }}
+  - {{ toYaml $rule | indent 4 | trim }}
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kumaco.name" . }}
+  labels:
+    {{- include "kumaco.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kumaco.name" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kumaco.name" . }}
+    namespace: {{ .Values.namespace }}
+---
+# The Lease of the leader election is named after the controller. Access is
+# limited to that Lease: the namespace may hold the Leases of the control
+# plane. Creation cannot be limited to a name.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "kumaco.name" . }}-leader-election
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "kumaco.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    resourceNames: [{{ include "kumaco.controllerName" . | quote }}]
+    verbs: ["get", "update"]
+  # The leader election records its transitions as events on the Lease.
+  - apiGroups: ["", "events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "kumaco.name" . }}-leader-election
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "kumaco.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "kumaco.name" . }}-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kumaco.name" . }}
+    namespace: {{ .Values.namespace }}
+{{- if .Values.metrics.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kumaco.name" . }}-metrics-auth
+  labels:
+    {{- include "kumaco.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["subjectaccessreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kumaco.name" . }}-metrics-auth
+  labels:
+    {{- include "kumaco.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kumaco.name" . }}-metrics-auth
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kumaco.name" . }}
+    namespace: {{ .Values.namespace }}
+---
+# Bind this role to what scrapes the metrics of kumaco.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kumaco.name" . }}-metrics-reader
+  labels:
+    {{- include "kumaco.labels" . | nindent 4 }}
+rules:
+  - nonResourceURLs: ["/metrics"]
+    verbs: ["get"]
+{{- end }}
