@@ -11,6 +11,7 @@ e2e suite (see below).
 |---|---|---|
 | `mise run test` | Unit tests. | Nothing. |
 | `mise run test:race` | Unit tests with the race detector. | A C compiler. |
+| `mise run test:fuzz` | Fuzz tests of the parsers, 30 seconds each. | Nothing. |
 | `mise run test:envtest` | Unit tests and the envtest suite. | Nothing: mise installs the control-plane binaries. |
 | `mise run e2e` | Kind e2e suite. | Docker or Podman, and network access to pull the node image. |
 | `mise run lint:contracts` | The links between `README.md` and the tests. | Nothing. |

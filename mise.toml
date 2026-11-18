@@ -65,6 +65,13 @@ run = "go test ./..."
 description = "Unit tests with the race detector"
 run = "go test -race ./..."
 
+[tasks."test:fuzz"]
+# Go fuzzes one function of one package at a time.
+description = "Fuzz tests, 30 seconds each"
+run = [
+  "go test ./internal/schedule -run '^$' -fuzz '^FuzzParse$' -fuzztime 30s",
+]
+
 [tasks."test:envtest"]
 description = "envtest suite: tests against a real kube-apiserver and etcd"
 run = 'KUBEBUILDER_ASSETS="$(mise where http:envtest)/envtest" go test -tags=envtest -count=1 ./...'
