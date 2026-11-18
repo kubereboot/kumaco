@@ -16,6 +16,8 @@ golangci-lint = "2.15.0"
 goreleaser = "2.20.2"
 cosign = "3.1.4"
 syft = "1.57.2"
+# Checks the GitHub Actions workflows (mise run lint).
+actionlint = "1.7.12"
 # Security scans (mise run scan:trivy, scan:snyk).
 trivy = "0.76.2"
 snyk = "1.1308.4"
@@ -51,7 +53,7 @@ description = "Format the code in place"
 run = "gofmt -w ."
 
 [tasks.lint]
-description = "Check formatting, and run go vet and logcheck on every build-tag variant"
+description = "Check formatting, run go vet and logcheck on every build-tag variant, and check the workflows"
 run = [
   'unformatted="$(gofmt -l .)"; test -z "$unformatted" || { echo "not formatted (mise run fmt):"; echo "$unformatted"; exit 1; }',
   "go vet ./...",
@@ -61,6 +63,8 @@ run = [
   "logcheck ./...",
   "logcheck -tags=envtest ./...",
   "logcheck -tags=e2e ./...",
+  # The GitHub Actions workflows.
+  "actionlint",
 ]
 
 [tasks.generate]

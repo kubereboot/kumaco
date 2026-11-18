@@ -1,0 +1,75 @@
+# The required checks (AGENTS.md, "Tests and required checks"). Each job runs
+# one mise task, the same one contributors run locally: the workflow only
+# installs mise, which installs the pinned tools.
+name: Checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  # The release workflow runs the same checks on the tagged commit.
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  task:
+    name: mise run ${{ matrix.task }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        task:
+          - lint
+          - lint:deps
+          - lint:complexity
+          - lint:contracts
+          - generate:check
+          - test
+          - test:race
+          - test:fuzz
+          - test:envtest
+          - bench
+          - scan:trivy
+          - release:check
+          - release:snapshot
+          - e2e
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # GoReleaser reads the tags and the history.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        with:
+          version: 2026.11.9
+
+      - name: mise run ${{ matrix.task }}
+        if: matrix.task != 'e2e'
+        run: mise run "${{ matrix.task }}"
+
+      # The run exports the logs of its cluster when it fails.
+      - name: mise run e2e
+        if: matrix.task == 'e2e'
+        run: mise run e2e -- -diagnostics-dir="${RUNNER_TEMP}/e2e-diagnostics"
+
+      - name: Keep the e2e diagnostics
+        if: failure() && matrix.task == 'e2e'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-diagnostics
+          path: ${{ runner.temp }}/e2e-diagnostics
+          if-no-files-found: ignore

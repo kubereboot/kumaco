@@ -19,7 +19,7 @@ e2e suite (see below).
 | `mise run lint:contracts` | The links between `README.md` and the tests. | Nothing. |
 | `mise run lint:deps` | The dependency policy: direct modules, imports, and the reviews of the exceptions in `hack/lint-deps/exceptions.json`. | Nothing. |
 | `mise run lint:complexity` | The cognitive complexity of every function, at most 15 (`gocognit`, through golangci-lint). | Nothing. |
-| `mise run lint` | Formatting, `go vet`, and `logcheck` (Kubernetes' checker of logging calls). | Nothing. |
+| `mise run lint` | Formatting, `go vet`, `logcheck` (Kubernetes' checker of logging calls), and `actionlint` on the GitHub Actions workflows. | Nothing. |
 | `mise run generate:check` | `mise run generate`, failing if the generated code or manifests were not up to date. | Nothing. |
 
 | `mise run scan:trivy` | Trivy scans of the repository, of its configuration (Dockerfile, manifests, chart) and of the image, after `mise run image`. HIGH and CRITICAL findings fail, vulnerabilities only when a fix exists; exceptions are in `.trivyignore.yaml`. | Docker or Podman, and network access to download the vulnerability database. |
@@ -28,6 +28,10 @@ e2e suite (see below).
 | `mise run release:snapshot` | A preview of a release, publishing and signing nothing: binaries, SBOMs and images for linux/amd64 and linux/arm64 (in `dist/` and the local container engine), and the CRD, kustomize manifests and Helm chart (in `.tmp/release/`). | Docker with Buildx. |
 
 A missing prerequisite fails a task. It never skips tests.
+
+GitHub Actions runs these same tasks (`.github/workflows/checks.yaml`): a check that passes
+locally passes there, and the other way around. Only `scan:snyk` and the publication of a
+release need what a contributor does not have.
 
 ## Where does a test go?
 
