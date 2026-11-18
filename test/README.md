@@ -22,6 +22,9 @@ e2e suite (see below).
 | `mise run lint` | Formatting, `go vet`, and `logcheck` (Kubernetes' checker of logging calls). | Nothing. |
 | `mise run generate:check` | `mise run generate`, failing if the generated code or manifests were not up to date. | Nothing. |
 
+| `mise run scan:trivy` | Trivy scans of the repository, of its configuration (Dockerfile, manifests, chart) and of the image, after `mise run image`. HIGH and CRITICAL findings fail, vulnerabilities only when a fix exists; exceptions are in `.trivyignore.yaml`. | Docker or Podman, and network access to download the vulnerability database. |
+| `mise run scan:snyk` | Snyk dependency and license scan. CI only. | `SNYK_TOKEN`: it fails without it. |
+
 A missing prerequisite fails a task. It never skips tests.
 
 ## Where does a test go?
