@@ -1,0 +1,22 @@
+{
+  "wrappers": [
+    "sigs.k8s.io/controller-runtime/pkg/log/zap",
+    "k8s.io/apiserver/pkg/cel/..."
+  ],
+  "exceptions": [
+    {
+      "name": "cel",
+      "modules": ["github.com/google/cel-go"],
+      "imports": [
+        "github.com/google/cel-go/cel",
+        "github.com/google/cel-go/common/types",
+        "k8s.io/apiserver/pkg/cel/..."
+      ],
+      "uses": ["production", "tests"],
+      "reason": "Compiling and evaluating the CEL triggers of README.md (\"CEL triggers\"). k8s.io/apiserver/pkg/cel/environment provides Kubernetes' CEL environment and libraries, so triggers behave like Kubernetes' own CEL features, but declaring the node variable and setting the cost limit need cel-go's API. The standard library has no CEL implementation. Other cel-go packages stay forbidden.",
+      "approval": "Approved by maintainer evrardjp on 2026-11-17; the reference is the review of the change that added this exception to AGENTS.md.",
+      "reviewed": "2026-11-17",
+      "nextReview": "2027-11-17"
+    }
+  ]
+}

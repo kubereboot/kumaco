@@ -85,6 +85,10 @@ run = 'KUBEBUILDER_ASSETS="$(mise where http:envtest)/envtest" go test -tags=env
 description = "Kind e2e suite, on the kind cluster kumaco-e2e. Creates it unless an earlier run kept it, and deletes it afterwards unless -keep is given"
 run = "go test -tags=e2e -count=1 -timeout=45m -v ./test/e2e -args -cluster=kumaco-e2e"
 
+[tasks."lint:deps"]
+description = "Dependency-policy gate: direct modules, imports, and exception reviews"
+run = "go run ./hack/lint-deps"
+
 [tasks."lint:contracts"]
 description = "Check the links between the sections of README.md and the tests"
 run = "go run ./hack/lint-contracts"
