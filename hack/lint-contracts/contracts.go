@@ -243,14 +243,9 @@ func parseUnlinked(text string) ([]unlinked, []string) {
 	return list, problems
 }
 
-// check applies the rules: a link names an existing section, every section is
-// linked or listed, and a pending section is not linked yet.
-func check(sections []section, links []link, list []unlinked) []string {
-	isSection := map[string]bool{}
-	for _, s := range sections {
-		isSection[s.Anchor] = true
-	}
-
+// firstLinks returns the first link to each section, and a problem for each
+// link to something that is not a section.
+func firstLinks(links []link, isSection map[string]bool) (map[string]string, []string) {
 	var problems []string
 	firstLink := map[string]string{}
 	for _, l := range links {
@@ -263,6 +258,18 @@ func check(sections []section, links []link, list []unlinked) []string {
 			firstLink[l.Anchor] = l.Position
 		}
 	}
+	return firstLink, problems
+}
+
+// check applies the rules: a link names an existing section, every section is
+// linked or listed, and a pending section is not linked yet.
+func check(sections []section, links []link, list []unlinked) []string {
+	isSection := map[string]bool{}
+	for _, s := range sections {
+		isSection[s.Anchor] = true
+	}
+
+	firstLink, problems := firstLinks(links, isSection)
 
 	listedAt := map[string]int{}
 	for _, u := range list {

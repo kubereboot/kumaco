@@ -235,27 +235,35 @@ func (l *allowlist) checkImports(repo fs.FS, module string) ([]string, error) {
 		if path.Ext(name) != ".go" {
 			return nil
 		}
-		text, err := fs.ReadFile(repo, file)
-		if err != nil {
-			return err
-		}
-		parsed, err := parser.ParseFile(files, file, text, parser.ImportsOnly)
-		if err != nil {
-			return err
-		}
-		for _, spec := range parsed.Imports {
-			importPath, err := strconv.Unquote(spec.Path.Value)
-			if err != nil {
-				return err
-			}
-			if reason := l.forbidden(importPath, module, useOf(file)); reason != "" {
-				problems = append(problems, fmt.Sprintf("%s:%d: import %q %s",
-					file, files.Position(spec.Pos()).Line, importPath, reason))
-			}
-		}
-		return nil
+		fileProblems, err := l.checkFile(repo, files, file, module)
+		problems = append(problems, fileProblems...)
+		return err
 	})
 	return problems, err
+}
+
+// checkFile returns a problem for each import of a Go file that is not allowed.
+func (l *allowlist) checkFile(repo fs.FS, files *token.FileSet, file, module string) ([]string, error) {
+	text, err := fs.ReadFile(repo, file)
+	if err != nil {
+		return nil, err
+	}
+	parsed, err := parser.ParseFile(files, file, text, parser.ImportsOnly)
+	if err != nil {
+		return nil, err
+	}
+	var problems []string
+	for _, spec := range parsed.Imports {
+		importPath, err := strconv.Unquote(spec.Path.Value)
+		if err != nil {
+			return nil, err
+		}
+		if reason := l.forbidden(importPath, module, useOf(file)); reason != "" {
+			problems = append(problems, fmt.Sprintf("%s:%d: import %q %s",
+				file, files.Position(spec.Pos()).Line, importPath, reason))
+		}
+	}
+	return problems, nil
 }
 
 // forbidden returns why a file with that use may not import the package, or

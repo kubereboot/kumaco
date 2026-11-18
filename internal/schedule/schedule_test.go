@@ -321,25 +321,29 @@ func TestNextFollowsTheGrammar(t *testing.T) {
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			schedule := mustParse(t, tt.startTime)
-			after := at(t, tt.after)
-			for i, want := range tt.want {
-				next, ok := schedule.Next(after)
-				if want == "none" {
-					if ok {
-						t.Fatalf("occurrence %d after %s = %s, want none", i, tt.after, next.Format(time.RFC3339))
-					}
-					return
-				}
-				if !ok {
-					t.Fatalf("occurrence %d: none, want %s", i, want)
-				}
-				if !next.Equal(at(t, want)) {
-					t.Fatalf("occurrence %d = %s, want %s", i, next.Format(time.RFC3339), want)
-				}
-				after = next
-			}
+			wantOccurrences(t, mustParse(t, tt.startTime), at(t, tt.after), tt.want)
 		})
+	}
+}
+
+// wantOccurrences checks the occurrences following a time; "none" ends the schedule.
+func wantOccurrences(t *testing.T, schedule *Schedule, after time.Time, wants []string) {
+	t.Helper()
+	for i, want := range wants {
+		next, ok := schedule.Next(after)
+		if want == "none" {
+			if ok {
+				t.Fatalf("occurrence %d = %s, want none", i, next.Format(time.RFC3339))
+			}
+			return
+		}
+		if !ok {
+			t.Fatalf("occurrence %d: none, want %s", i, want)
+		}
+		if !next.Equal(at(t, want)) {
+			t.Fatalf("occurrence %d = %s, want %s", i, next.Format(time.RFC3339), want)
+		}
+		after = next
 	}
 }
 

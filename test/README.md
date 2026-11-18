@@ -16,6 +16,7 @@ e2e suite (see below).
 | `mise run e2e` | Kind e2e suite. | Docker or Podman, and network access to pull the node image. |
 | `mise run lint:contracts` | The links between `README.md` and the tests. | Nothing. |
 | `mise run lint:deps` | The dependency policy: direct modules, imports, and the reviews of the exceptions in `hack/lint-deps/exceptions.json`. | Nothing. |
+| `mise run lint:complexity` | The cognitive complexity of every function, at most 15 (`gocognit`, through golangci-lint). | Nothing. |
 | `mise run lint` | Formatting and `go vet`. | Nothing. |
 | `mise run generate:check` | `mise run generate`, failing if the generated code or manifests were not up to date. | Nothing. |
 

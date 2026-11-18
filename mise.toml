@@ -10,6 +10,8 @@ go = "1.27.4"
 # kind and the node image in test/e2e/kind.yaml are bumped together: the image
 # must be the default node image of this kind release.
 kind = "0.33.0"
+# Only runs the cognitive-complexity linter: see .golangci.yml.
+golangci-lint = "2.15.0"
 
 # envtest control plane (kube-apiserver and etcd) of the supported Kubernetes
 # minor release. Its binaries are not put on PATH: test:envtest passes their
@@ -88,6 +90,14 @@ run = "go test -tags=e2e -count=1 -timeout=45m -v ./test/e2e -args -cluster=kuma
 [tasks."lint:deps"]
 description = "Dependency-policy gate: direct modules, imports, and exception reviews"
 run = "go run ./hack/lint-deps"
+
+[tasks."lint:complexity"]
+description = "Cognitive-complexity gate (gocognit, at most 15 per function)"
+run = [
+  "golangci-lint run ./...",
+  "golangci-lint run --build-tags=envtest ./...",
+  "golangci-lint run --build-tags=e2e ./...",
+]
 
 [tasks."lint:contracts"]
 description = "Check the links between the sections of README.md and the tests"
