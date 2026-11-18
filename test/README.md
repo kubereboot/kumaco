@@ -11,6 +11,7 @@ e2e suite (see below).
 |---|---|---|
 | `mise run test` | Unit tests. | Nothing. |
 | `mise run test:race` | Unit tests with the race detector. | A C compiler. |
+| `mise run bench` | Benchmarks: the schedule, and the controller with 10,000 representative nodes. | Nothing. |
 | `mise run test:fuzz` | Fuzz tests of the parsers, 30 seconds each. | Nothing. |
 | `mise run test:envtest` | Unit tests and the envtest suite, including the rendering of the kustomize manifests and of the Helm chart. | Nothing: mise installs the control-plane binaries, `kustomize` and `helm`. |
 | `mise run image` | Builds the kumaco image for this machine, as `ghcr.io/kubereboot/kumaco:dev`. | Docker or Podman (`CONTAINER_TOOL`, by default the provider of kind). |

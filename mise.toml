@@ -82,6 +82,10 @@ run = "go test ./..."
 description = "Unit tests with the race detector"
 run = "go test -race ./..."
 
+[tasks.bench]
+description = "Benchmarks, including the 10,000-node scale benchmarks of the controller"
+run = "go test -run '^$' -bench . -benchmem ./internal/..."
+
 [tasks."test:fuzz"]
 # Go fuzzes one function of one package at a time.
 description = "Fuzz tests, 30 seconds each"

@@ -17,7 +17,6 @@ pending #how-kured-relies-on-kumaco-and-how-to-configure-your-maintenance-window
 pending #using-kumaco-with-the-node-readiness-controller This integration has no e2e scenario yet.
 pending #using-kumaco-with-node-problem-detector This integration has no e2e scenario yet.
 informative #explanation-of-interconnection-with-kured Rationale: the behaviour it refers to is specified in the other sections.
-pending #api-request-rate The scale benchmark validating the default request rate is not implemented yet.
 informative #compatibility Heading only: its subsections hold the contracts.
 informative #public-contracts Lists the contracts that the other sections define, and the release policy for them.
 informative #getting-help Contact details.
