@@ -19,13 +19,8 @@ pending #the-node-is-the-record The controller is not implemented yet.
 pending #one-function-one-write-per-node The controller is not implemented yet.
 pending #reading-its-own-writes The controller is not implemented yet.
 pending #startup-and-periodic-sweep The controller is not implemented yet.
-pending #when-does-a-window-keep-a-node-under-maintenance The controller is not implemented yet.
 pending #reconciling-a-window The controller is not implemented yet.
 informative #handling-maintenancewindow-conflicts Heading only: its subsections hold the contracts.
-pending #scheduling-conflicts The controller is not implemented yet.
-pending #triggering-conflicts The controller is not implemented yet.
-pending #nodeselector-and-trigger-conflicts The controller is not implemented yet.
-pending #concurrency-conflicts The controller is not implemented yet.
 pending #multi-tenancy-while-doing-self-service-is-not-an-afterthought The controller is not implemented yet.
 pending #replicas-of-the-same-controller The controller is not implemented yet.
 pending #the-harder-approach-the-service-account-limitations The controller and its deployment manifests are not implemented yet.
