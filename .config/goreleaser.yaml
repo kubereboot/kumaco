@@ -1,0 +1,121 @@
+# The release of kumaco (AGENTS.md, "Releases and images"), informed by Kured's
+# release configuration. Run it through mise: `mise run release:check`,
+# `mise run release:snapshot` (publishes nothing), and, in the tag workflow
+# only, `mise run release:publish`.
+version: 2
+
+project_name: kumaco
+
+before:
+  hooks:
+    # The CRD, the kustomize manifests and the Helm chart of this release.
+    - sh hack/release-artifacts.sh "{{ .Version }}" "{{ .Tag }}" "{{ .Env.REGISTRY }}/{{ .Env.IMAGE_NAME }}"
+
+builds:
+  - id: kumaco
+    main: ./cmd
+    binary: kumaco
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - formats:
+      - binary
+
+checksum:
+  name_template: checksums.txt
+
+sboms:
+  - artifacts: binary
+    documents:
+      - "{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}.sbom.json"
+
+dockers_v2:
+  - id: kumaco
+    ids:
+      - kumaco
+    dockerfile: Dockerfile
+    images:
+      - "{{ .Env.REGISTRY }}/{{ .Env.IMAGE_NAME }}"
+    # The version and the short commit: never a floating tag.
+    tags:
+      - "{{ .Tag }}"
+      - "{{ .ShortCommit }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    sbom: true
+    labels:
+      "org.opencontainers.image.created": "{{ .Date }}"
+      "org.opencontainers.image.description": "kumaco, the Kubernetes maintenance controller"
+      "org.opencontainers.image.licenses": "Apache-2.0"
+      "org.opencontainers.image.revision": "{{ .FullCommit }}"
+      "org.opencontainers.image.source": "{{ .GitURL }}"
+      "org.opencontainers.image.title": "{{ .ProjectName }}"
+      "org.opencontainers.image.version": "{{ .Version }}"
+    annotations:
+      "org.opencontainers.image.created": "{{ .Date }}"
+      "org.opencontainers.image.description": "kumaco, the Kubernetes maintenance controller"
+      "org.opencontainers.image.licenses": "Apache-2.0"
+      "org.opencontainers.image.revision": "{{ .FullCommit }}"
+      "org.opencontainers.image.source": "{{ .GitURL }}"
+      "org.opencontainers.image.title": "{{ .ProjectName }}"
+      "org.opencontainers.image.version": "{{ .Version }}"
+    flags:
+      - "--provenance=true"
+
+docker_digest:
+  name_template: digests.txt
+
+# Keyless signatures, with the identity of the release workflow.
+docker_signs:
+  - artifacts: all
+    args:
+      - sign
+      - --yes
+      - "${artifact}@${digest}"
+
+release:
+  name_template: "kumaco {{ .Version }}"
+  extra_files:
+    - glob: ".tmp/release/kumaco-crd.yaml"
+    - glob: ".tmp/release/kumaco.yaml"
+    - glob: ".tmp/release/kumaco-*.tgz"
+  mode: replace
+  # The Go version determines the embedded time zone database (README.md,
+  # "Time zones").
+  header: |
+    Built with Go {{ .Env.GO_VERSION }}, whose time zone database kumaco embeds.
+    This release supports the latest Kubernetes minor release only (README, "Compatibility").
+
+    Images: `{{ .Env.REGISTRY }}/{{ .Env.IMAGE_NAME }}:{{ .Tag }}` (linux/amd64, linux/arm64), with SBOMs,
+    build provenance and keyless cosign signatures.
+
+# Grouped by Conventional Commits type, breaking changes first: before v1.0.0,
+# a minor release may break metrics, the CRD API and exported Go symbols.
+# Write the migration notes of the breaking changes in the release notes.
+changelog:
+  use: git
+  sort: asc
+  groups:
+    - title: "Breaking changes"
+      regexp: '^.*?\w+!:.+$'
+      order: 0
+    - title: "Features"
+      regexp: '^.*?feat:.+$'
+      order: 1
+    - title: "Fixes"
+      regexp: '^.*?(fix|perf):.+$'
+      order: 2
+    - title: "Others"
+      order: 999

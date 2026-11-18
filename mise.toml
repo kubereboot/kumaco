@@ -12,6 +12,10 @@ go = "1.27.4"
 kind = "0.33.0"
 # Only runs the cognitive-complexity linter: see .golangci.yml.
 golangci-lint = "2.15.0"
+# The release: binaries, images, SBOMs and signatures (mise run release:*).
+goreleaser = "2.20.2"
+cosign = "3.1.4"
+syft = "1.57.2"
 # Security scans (mise run scan:trivy, scan:snyk).
 trivy = "0.76.2"
 snyk = "1.1308.4"
@@ -145,6 +149,27 @@ description = "Snyk dependency and license scan (CI only: needs SNYK_TOKEN)"
 run = """
 test -n "${SNYK_TOKEN:-}" || { echo "scan:snyk: SNYK_TOKEN is not set: this scan needs a Snyk account token, and cannot pass without it"; exit 1; }
 snyk test --severity-threshold=high
+"""
+
+[tasks."release:check"]
+description = "Validate the GoReleaser configuration"
+run = "goreleaser check --config .config/goreleaser.yaml"
+
+[tasks."release:snapshot"]
+# Nothing is published or signed: the images stay in the local container
+# engine, and the artifacts in dist/ and .tmp/release/.
+description = "Non-publishing preview of a release: binaries, images, SBOMs, manifests and chart"
+env = { REGISTRY = "ghcr.io", IMAGE_NAME = "kubereboot/kumaco" }
+run = 'GO_VERSION="$(go env GOVERSION)" goreleaser release --config .config/goreleaser.yaml --snapshot --clean --skip=sign'
+
+[tasks."release:publish"]
+# Only the tag workflow runs this: it publishes images to ghcr.io and a GitHub
+# release, and signs them with the identity of the workflow.
+description = "Publish a release (tag workflow only: needs GITHUB_TOKEN and a signed tag)"
+env = { REGISTRY = "ghcr.io", IMAGE_NAME = "kubereboot/kumaco" }
+run = """
+test -n "${GITHUB_TOKEN:-}" || { echo "release:publish: GITHUB_TOKEN is not set: only the tag workflow publishes releases"; exit 1; }
+GO_VERSION="$(go env GOVERSION)" goreleaser release --config .config/goreleaser.yaml --clean
 """
 
 [tasks."lint:deps"]

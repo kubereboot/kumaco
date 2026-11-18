@@ -24,6 +24,8 @@ e2e suite (see below).
 
 | `mise run scan:trivy` | Trivy scans of the repository, of its configuration (Dockerfile, manifests, chart) and of the image, after `mise run image`. HIGH and CRITICAL findings fail, vulnerabilities only when a fix exists; exceptions are in `.trivyignore.yaml`. | Docker or Podman, and network access to download the vulnerability database. |
 | `mise run scan:snyk` | Snyk dependency and license scan. CI only. | `SNYK_TOKEN`: it fails without it. |
+| `mise run release:check` | Validates the GoReleaser configuration (`.config/goreleaser.yaml`). | Nothing. |
+| `mise run release:snapshot` | A preview of a release, publishing and signing nothing: binaries, SBOMs and images for linux/amd64 and linux/arm64 (in `dist/` and the local container engine), and the CRD, kustomize manifests and Helm chart (in `.tmp/release/`). | Docker with Buildx. |
 
 A missing prerequisite fails a task. It never skips tests.
 
