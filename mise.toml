@@ -12,6 +12,9 @@ go = "1.27.4"
 kind = "0.33.0"
 # Only runs the cognitive-complexity linter: see .golangci.yml.
 golangci-lint = "2.15.0"
+# Kubernetes' checker of logging calls. It has no release binary: mise builds
+# this exact version from source.
+"go:sigs.k8s.io/logtools/logcheck" = "0.11.0"
 
 # envtest control plane (kube-apiserver and etcd) of the supported Kubernetes
 # minor release. Its binaries are not put on PATH: test:envtest passes their
@@ -38,12 +41,16 @@ description = "Format the code in place"
 run = "gofmt -w ."
 
 [tasks.lint]
-description = "Check formatting and run go vet, on every build-tag variant"
+description = "Check formatting, and run go vet and logcheck on every build-tag variant"
 run = [
   'unformatted="$(gofmt -l .)"; test -z "$unformatted" || { echo "not formatted (mise run fmt):"; echo "$unformatted"; exit 1; }',
   "go vet ./...",
   "go vet -tags=envtest ./...",
   "go vet -tags=e2e ./...",
+  # Logging calls, including their key/value pairs, which go vet does not check.
+  "logcheck ./...",
+  "logcheck -tags=envtest ./...",
+  "logcheck -tags=e2e ./...",
 ]
 
 [tasks.generate]

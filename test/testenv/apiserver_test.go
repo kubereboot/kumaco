@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -196,4 +197,32 @@ func wantConditions(t *testing.T, node string, want map[corev1.NodeConditionType
 	if !maps.Equal(statuses, want) {
 		t.Errorf("conditions of node %s = %v, want %v", node, statuses, want)
 	}
+}
+
+// kumaco sends the UID of the node its conditions were decided for. A node
+// that was deleted and created again with the same name has another UID: the
+// API server must reject the write, so that the new node does not inherit the
+// records of the old one. It answers Invalid, as the UID is immutable.
+//
+// README: #kubernetes-versions
+func TestServerSideApplyRejectsANodeCreatedAgain(t *testing.T) {
+	ctx := t.Context()
+	nodes := apiServer.CoreV1().Nodes()
+	old := createNode(t, "created-again")
+	if err := nodes.Delete(ctx, old.Name, metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	again := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: old.Name}}
+	if _, err := nodes.Create(ctx, again, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	apply := corev1ac.Node(old.Name).WithUID(old.UID).
+		WithStatus(corev1ac.NodeStatus().WithConditions(condition(rebootInProgress, corev1.ConditionTrue)))
+	_, err := nodes.ApplyStatus(ctx, apply, metav1.ApplyOptions{FieldManager: fieldManager, Force: true})
+
+	if !apierrors.IsInvalid(err) || !apierrors.HasStatusCause(err, metav1.CauseTypeFieldValueInvalid) || !strings.Contains(err.Error(), "metadata.uid") {
+		t.Fatalf("applying conditions decided for the deleted node: %v, want an Invalid error about metadata.uid", err)
+	}
+	wantConditions(t, old.Name, map[corev1.NodeConditionType]corev1.ConditionStatus{})
 }

@@ -10,32 +10,15 @@ informative #kumaco---kubernetes-maintenance-controller Title and table of conte
 informative #introduction Overview of the project and of the Kured v2 architecture.
 informative #behaviour Heading only: its subsections hold the contracts.
 informative #the-personas Defines the two personas; their access rights are in "Security and access rights".
-pending #what-does-it-reconcile-and-when The controller is not implemented yet.
-pending #what-does-it-look-like-on-my-node The controller is not implemented yet.
-pending #heartbeat-contract The controller is not implemented yet.
-pending #condition-types-and-their-owners The controller and its e2e suite with Kured and its reporters are not implemented yet.
+pending #condition-types-and-their-owners The e2e suite with Kured and its reporters does not exist: upstream does not publish or consume these condition types yet.
 informative #how-does-it-work Heading only: its subsections hold the contracts.
-pending #the-node-is-the-record The controller is not implemented yet.
-pending #one-function-one-write-per-node The controller is not implemented yet.
-pending #reading-its-own-writes The controller is not implemented yet.
-pending #startup-and-periodic-sweep The controller is not implemented yet.
-pending #reconciling-a-window The controller is not implemented yet.
 informative #handling-maintenancewindow-conflicts Heading only: its subsections hold the contracts.
-pending #multi-tenancy-while-doing-self-service-is-not-an-afterthought The controller is not implemented yet.
-pending #replicas-of-the-same-controller The controller is not implemented yet.
-pending #the-harder-approach-the-service-account-limitations The controller and its deployment manifests are not implemented yet.
-pending #the-softer-approach-the-window-label-selector The controller is not implemented yet.
-pending #how-kured-relies-on-kumaco-and-how-to-configure-your-maintenance-window-for-kured The controller and its e2e suite with Kured and its reporters are not implemented yet.
+pending #how-kured-relies-on-kumaco-and-how-to-configure-your-maintenance-window-for-kured The e2e suite with Kured and its reporters does not exist: Kured has no condition-driven mode yet, and the reporters are not implemented. This is a required merge gate that is NOT met.
 pending #using-kumaco-with-the-node-readiness-controller This integration has no e2e scenario yet.
 pending #using-kumaco-with-node-problem-detector This integration has no e2e scenario yet.
 informative #explanation-of-interconnection-with-kured Rationale: the behaviour it refers to is specified in the other sections.
-pending #configuration The controller and its flags are not implemented yet.
-pending #api-request-rate The controller and its scale benchmark are not implemented yet.
+pending #api-request-rate The scale benchmark validating the default request rate is not implemented yet.
 informative #compatibility Heading only: its subsections hold the contracts.
 informative #public-contracts Lists the contracts that the other sections define, and the release policy for them.
-pending #metrics The controller is not implemented yet.
-pending #gotchas The controller is not implemented yet.
-pending #debugging-with-kumaco-events The controller is not implemented yet.
-pending #security-and-access-rights The controller and its deployment manifests are not implemented yet.
 informative #getting-help Contact details.
 informative #trademarks Legal notice.

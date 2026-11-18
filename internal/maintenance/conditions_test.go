@@ -40,6 +40,8 @@ func conditionOf(t *testing.T, write Write, conditionType string) corev1.NodeCon
 }
 
 // The table of the README: a reboot window and a firmware window.
+//
+// README: #one-function-one-write-per-node, #the-node-is-the-record
 func TestDesiredConditionsIsTheCompleteList(t *testing.T) {
 	since := minutesAgo(20)
 	for _, tt := range []struct {
@@ -120,6 +122,7 @@ func TestDesiredConditionsIsTheCompleteList(t *testing.T) {
 	}
 }
 
+// README: #one-function-one-write-per-node
 func TestDesiredConditionsDoesNotChangeTheNode(t *testing.T) {
 	node := newNode("a", under(reboot, minutesAgo(20)))
 	before := node.DeepCopy()
@@ -134,6 +137,7 @@ func TestDesiredConditionsDoesNotChangeTheNode(t *testing.T) {
 	}
 }
 
+// README: #what-does-it-look-like-on-my-node, #one-function-one-write-per-node
 func TestTheConditionsOfANodeUnderMaintenance(t *testing.T) {
 	node := newNode("a", with(generic, corev1.ConditionFalse, minutesAgo(600)), under(firmware, minutesAgo(20)))
 
@@ -167,6 +171,7 @@ func TestTheConditionsOfANodeUnderMaintenance(t *testing.T) {
 	}
 }
 
+// README: #what-does-it-look-like-on-my-node, #one-function-one-write-per-node
 func TestTheConditionOfANodeWithoutMaintenance(t *testing.T) {
 	node := newNode("a", under(reboot, minutesAgo(20)))
 
@@ -197,6 +202,8 @@ func TestTheConditionOfANodeWithoutMaintenance(t *testing.T) {
 }
 
 // A difference in message alone does not cause a write.
+//
+// README: #one-function-one-write-per-node
 func TestAMessageAloneIsNotAChange(t *testing.T) {
 	node := newNode("a", with(generic, corev1.ConditionFalse, minutesAgo(20)))
 
@@ -214,6 +221,8 @@ func TestAMessageAloneIsNotAChange(t *testing.T) {
 
 // Heartbeats are refreshed when due, on every owned condition, in the same
 // list as any other change.
+//
+// README: #heartbeat-contract, #startup-and-periodic-sweep
 func TestHeartbeatsAreRefreshedWhenDue(t *testing.T) {
 	interval := 5 * time.Minute
 	node := newNode("a",
@@ -244,6 +253,7 @@ func TestHeartbeatsAreRefreshedWhenDue(t *testing.T) {
 	}
 }
 
+// README: #one-function-one-write-per-node
 func TestOwned(t *testing.T) {
 	for conditionType, want := range map[string]bool{
 		generic: true, reboot: true, "kumaco.kured.dev/Anything": true,
@@ -255,6 +265,7 @@ func TestOwned(t *testing.T) {
 	}
 }
 
+// README: #what-does-it-reconcile-and-when
 func TestRelevantChange(t *testing.T) {
 	base := func() *corev1.Node {
 		return newNode("a", labelled("team", "a"),

@@ -17,7 +17,7 @@ e2e suite (see below).
 | `mise run lint:contracts` | The links between `README.md` and the tests. | Nothing. |
 | `mise run lint:deps` | The dependency policy: direct modules, imports, and the reviews of the exceptions in `hack/lint-deps/exceptions.json`. | Nothing. |
 | `mise run lint:complexity` | The cognitive complexity of every function, at most 15 (`gocognit`, through golangci-lint). | Nothing. |
-| `mise run lint` | Formatting and `go vet`. | Nothing. |
+| `mise run lint` | Formatting, `go vet`, and `logcheck` (Kubernetes' checker of logging calls). | Nothing. |
 | `mise run generate:check` | `mise run generate`, failing if the generated code or manifests were not up to date. | Nothing. |
 
 A missing prerequisite fails a task. It never skips tests.

@@ -44,6 +44,7 @@ func wantSituations(t *testing.T, decision Decision, want map[string]string) {
 	}
 }
 
+// README: #reconciling-a-window
 func TestMaintenanceStartsOnTheCandidatesUpToTheFreeSlots(t *testing.T) {
 	window := newWindow(t, "reboots", concurrency(2), startTriggers(rebootRequired), stopTriggers(rebootDone))
 	nodes := []*corev1.Node{
@@ -66,6 +67,7 @@ func TestMaintenanceStartsOnTheCandidatesUpToTheFreeSlots(t *testing.T) {
 	})
 }
 
+// README: #reconciling-a-window
 func TestAnEmptyStartTriggersListLetsTheScheduleAndConcurrencyDecide(t *testing.T) {
 	decision := decide(t, newWindow(t, "reboots"), []*corev1.Node{newNode("a"), newNode("b")})
 
@@ -76,7 +78,7 @@ func TestAnEmptyStartTriggersListLetsTheScheduleAndConcurrencyDecide(t *testing.
 // The release runs before any start: the slot it frees is reused at once, and a
 // node whose stopTriggers match does not start.
 //
-// README: #when-does-a-window-keep-a-node-under-maintenance
+// README: #when-does-a-window-keep-a-node-under-maintenance, #reconciling-a-window
 func TestAReleasedSlotIsReusedInTheSameReconcile(t *testing.T) {
 	window := newWindow(t, "reboots", startTriggers(rebootRequired), stopTriggers(rebootDone))
 	nodes := []*corev1.Node{
@@ -218,6 +220,7 @@ func TestAnotherStopTriggerStillReleasesWhenOneErrors(t *testing.T) {
 	wantNames(t, "released", releasedNames(decision.Released), "a")
 }
 
+// README: #reconciling-a-window
 func TestAWindowThatIsNotInProgressStartsNothing(t *testing.T) {
 	window := newWindow(t, "reboots", closed())
 	nodes := []*corev1.Node{newNode("a", under(reboot, minutesAgo(20))), newNode("b")}
@@ -233,7 +236,7 @@ func TestAWindowThatIsNotInProgressStartsNothing(t *testing.T) {
 
 // Lowering concurrency never releases nodes: it only prevents new starts.
 //
-// README: #the-kumacokureddev-maintenancewindow-crd
+// README: #the-kumacokureddev-maintenancewindow-crd, #reconciling-a-window
 func TestLoweringConcurrencyDoesNotEvict(t *testing.T) {
 	nodes := []*corev1.Node{
 		newNode("a", under(reboot, minutesAgo(20))),
@@ -249,6 +252,7 @@ func TestLoweringConcurrencyDoesNotEvict(t *testing.T) {
 	}
 }
 
+// README: #reconciling-a-window
 func TestTheOrderOfTheCandidates(t *testing.T) {
 	old, recent := minutesAgo(600), minutesAgo(60)
 	nodes := []*corev1.Node{
@@ -317,6 +321,8 @@ func TestWindowsOfDifferentKindsAreDistinct(t *testing.T) {
 }
 
 // Only a True condition is a record.
+//
+// README: #the-node-is-the-record
 func TestOnlyATrueConditionIsARecord(t *testing.T) {
 	nodes := []*corev1.Node{
 		newNode("a", with(reboot, corev1.ConditionUnknown, minutesAgo(20))),
@@ -331,6 +337,8 @@ func TestOnlyATrueConditionIsARecord(t *testing.T) {
 
 // A deleted or Invalid window keeps nothing. Its reconcile releases the nodes of
 // its kind that no other window keeps.
+//
+// README: #reconciling-a-window, #gotchas
 func TestTheReleaseOfADeletedWindow(t *testing.T) {
 	nodes := []*corev1.Node{newNode("a", under(reboot, minutesAgo(20))), newNode("b", under(firmware, minutesAgo(20)))}
 
@@ -390,6 +398,8 @@ func TestTheNodeSelectorHasPrecedenceOverTriggers(t *testing.T) {
 // A stopTriggers expression depending on a condition the window sets
 // oscillates: the node is released right after its maintenance started. This
 // documents the behaviour; kumaco does not prevent it.
+//
+// README: #gotchas
 func TestASelfReferentialStopTriggerReleasesRightAfterTheStart(t *testing.T) {
 	window := newWindow(t, "reboots", stopTriggers(
 		`node.status.conditions.exists(c, c.type == 'MaintenanceInProgress' && c.status == 'True')`))

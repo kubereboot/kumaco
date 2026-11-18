@@ -6,17 +6,53 @@
   "exceptions": [
     {
       "name": "cel",
-      "modules": ["github.com/google/cel-go"],
+      "modules": [
+        "github.com/google/cel-go"
+      ],
       "imports": [
         "github.com/google/cel-go/cel",
         "github.com/google/cel-go/common/types",
         "k8s.io/apiserver/pkg/cel/..."
       ],
-      "uses": ["production", "tests"],
+      "uses": [
+        "production",
+        "tests"
+      ],
       "reason": "Compiling and evaluating the CEL triggers of README.md (\"CEL triggers\"). k8s.io/apiserver/pkg/cel/environment provides Kubernetes' CEL environment and libraries, so triggers behave like Kubernetes' own CEL features, but declaring the node variable and setting the cost limit need cel-go's API. The standard library has no CEL implementation. Other cel-go packages stay forbidden.",
       "approval": "Approved by maintainer evrardjp on 2026-11-17; the reference is the review of the change that added this exception to AGENTS.md.",
       "reviewed": "2026-11-17",
       "nextReview": "2027-11-17"
+    },
+    {
+      "name": "zap",
+      "imports": [
+        "sigs.k8s.io/controller-runtime/pkg/log/zap"
+      ],
+      "uses": [
+        "production",
+        "tests"
+      ],
+      "reason": "The logging backend that Kubebuilder scaffolds and controller-runtime documents, with its --zap-* flags. A standard-library log/slog backend would work, but keeping the default keeps the generated code standard, which makes long-term maintenance and scaffold upgrades simpler. Direct imports of go.uber.org/zap packages stay forbidden.",
+      "approval": "Approved by maintainer evrardjp on 2026-11-17; the reference is the review of the change that added this exception to AGENTS.md.",
+      "reviewed": "2026-11-17",
+      "nextReview": "2027-11-17"
+    },
+    {
+      "name": "prometheus",
+      "modules": [
+        "github.com/prometheus/client_golang"
+      ],
+      "imports": [
+        "github.com/prometheus/client_golang/prometheus"
+      ],
+      "uses": [
+        "production",
+        "tests"
+      ],
+      "reason": "Defining the kumaco_* metrics of README.md (\"Metrics\") and registering them on controller-runtime's metrics registry, as Kubebuilder documents. controller-runtime already links this module; the standard library has no Prometheus client, and k8s.io/component-base/metrics wraps the same module for Kubernetes' own registry. Other client_golang packages stay forbidden.",
+      "approval": "Approved by maintainer evrardjp on 2026-11-18, when asked which exception to use for metrics; the reference is the review of the change that adds this exception.",
+      "reviewed": "2026-11-18",
+      "nextReview": "2027-11-18"
     }
   ]
 }

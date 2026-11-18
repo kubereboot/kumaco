@@ -347,7 +347,7 @@ func wantOccurrences(t *testing.T, schedule *Schedule, after time.Time, wants []
 	}
 }
 
-// README: #the-kumacokureddev-maintenancewindow-crd, #time-zones
+// README: #the-kumacokureddev-maintenancewindow-crd, #time-zones, #reconciling-a-window, #when-does-a-window-keep-a-node-under-maintenance
 func TestEvaluate(t *testing.T) {
 	const day = 24 * time.Hour
 	for _, tt := range []struct {

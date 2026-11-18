@@ -1,0 +1,41 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kumaco
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - nodes/status
+  verbs:
+  - patch
+- apiGroups:
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - kumaco.kured.dev
+  resources:
+  - maintenancewindows
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - kumaco.kured.dev
+  resources:
+  - maintenancewindows/status
+  verbs:
+  - patch
