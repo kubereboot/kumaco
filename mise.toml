@@ -70,6 +70,7 @@ run = "go test -race ./..."
 description = "Fuzz tests, 30 seconds each"
 run = [
   "go test ./internal/schedule -run '^$' -fuzz '^FuzzParse$' -fuzztime 30s",
+  "go test ./internal/trigger -run '^$' -fuzz '^FuzzCompile$' -fuzztime 30s",
 ]
 
 [tasks."test:envtest"]
