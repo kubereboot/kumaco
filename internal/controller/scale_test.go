@@ -112,7 +112,10 @@ type scaleCache struct {
 func newScaleCache(nodes int, windows ...kumacov1alpha1.MaintenanceWindow) *scaleCache {
 	cache := &scaleCache{byName: map[string]*corev1.Node{}, windows: windows}
 	for index := range nodes {
-		cache.nodes = append(cache.nodes, representativeNode(index))
+		node := representativeNode(index)
+		// As the cache of the controller keeps it.
+		node.Status = corev1.NodeStatus{Conditions: node.Status.Conditions}
+		cache.nodes = append(cache.nodes, node)
 	}
 	for i := range cache.nodes {
 		cache.byName[cache.nodes[i].Name] = &cache.nodes[i]
@@ -222,22 +225,61 @@ func BenchmarkReconcile10000Nodes(b *testing.B) {
 	}
 }
 
-// The memory of 10,000 representative nodes, which is what the informer cache
-// of the controller holds.
+// The memory of 10,000 representative nodes in the informer cache of the
+// controller: as the API server sends them, and as the cache keeps them.
 func BenchmarkCacheOf10000Nodes(b *testing.B) {
-	var before, after runtime.MemStats
-	for b.Loop() {
-		runtime.GC()
-		runtime.ReadMemStats(&before)
-		nodes := make([]*corev1.Node, scaleNodes)
-		for index := range nodes {
-			node := representativeNode(index)
-			nodes[index] = &node
-		}
-		runtime.GC()
-		runtime.ReadMemStats(&after)
-		b.ReportMetric(float64(after.HeapAlloc-before.HeapAlloc)/(1<<20), "MiB-heap")
-		runtime.KeepAlive(nodes)
+	for name, transform := range map[string]func(any) (any, error){
+		"as-sent": func(object any) (any, error) { return object, nil },
+		"as-kept": trim,
+	} {
+		b.Run(name, func(b *testing.B) {
+			var before, after runtime.MemStats
+			for b.Loop() {
+				runtime.GC()
+				runtime.ReadMemStats(&before)
+				nodes := make([]*corev1.Node, scaleNodes)
+				for index := range nodes {
+					node := representativeNode(index)
+					if _, err := transform(&node); err != nil {
+						b.Fatal(err)
+					}
+					nodes[index] = &node
+				}
+				runtime.GC()
+				runtime.ReadMemStats(&after)
+				b.ReportMetric(float64(after.HeapAlloc-before.HeapAlloc)/(1<<20), "MiB-heap")
+				runtime.KeepAlive(nodes)
+			}
+		})
+	}
+}
+
+// The cache keeps what the controller and the triggers read of a node, and
+// nothing else of its status.
+//
+// README: #cel-triggers, #what-does-it-reconcile-and-when
+func TestTheCacheKeepsOnlyWhatIsRead(t *testing.T) {
+	node := representativeNode(0)
+	node.ManagedFields = []metav1.ManagedFieldsEntry{{Manager: "kubelet"}}
+	want := representativeNode(0)
+
+	kept, err := trim(&node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := kept.(*corev1.Node)
+	if got.Name != want.Name || len(got.Labels) != len(want.Labels) || len(got.Annotations) != len(want.Annotations) ||
+		got.Spec.ProviderID != want.Spec.ProviderID || len(got.Status.Conditions) != len(want.Status.Conditions) {
+		t.Errorf("the cache lost a part of the node that is read: %+v", got)
+	}
+	if got.ManagedFields != nil || got.Status.Images != nil || got.Status.Capacity != nil || got.Status.Addresses != nil {
+		t.Errorf("the cache keeps a part of the node that nothing reads: %+v", got.Status)
+	}
+
+	window := &kumacov1alpha1.MaintenanceWindow{}
+	window.Status.State = kumacov1alpha1.StateInProgress
+	if kept, err := trim(window); err != nil || kept.(*kumacov1alpha1.MaintenanceWindow).Status.State != kumacov1alpha1.StateInProgress {
+		t.Errorf("the cache changed a window: %+v, %v", kept, err)
 	}
 }
 

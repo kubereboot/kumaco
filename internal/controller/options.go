@@ -44,14 +44,25 @@ type NodeStatusApplier interface {
 
 // CacheOptions restricts the informer cache to the nodes the controller
 // manages (--node-selector) and to its windows (--window-label-selector):
-// "managed nodes" are then the nodes of the cache. It also drops managed
-// fields, which nothing reads.
+// "managed nodes" are then the nodes of the cache. The cache only keeps what
+// the controller reads.
 func CacheOptions(nodeSelector, windowSelector labels.Selector) cache.Options {
 	return cache.Options{
-		DefaultTransform: cache.TransformStripManagedFields(),
+		DefaultTransform: trim,
 		ByObject: map[client.Object]cache.ByObject{
 			&corev1.Node{}:                      {Label: nodeSelector},
 			&kumacov1alpha1.MaintenanceWindow{}: {Label: windowSelector},
 		},
 	}
+}
+
+// trim drops, before an object enters the cache, what nothing reads: managed
+// fields, and the status of nodes except their conditions (images, capacity,
+// addresses...), which triggers cannot read either. At 10,000 nodes, this is
+// most of the memory of the cache (see BenchmarkCacheOf10000Nodes).
+func trim(object any) (any, error) {
+	if node, isNode := object.(*corev1.Node); isNode {
+		node.Status = corev1.NodeStatus{Conditions: node.Status.Conditions}
+	}
+	return cache.TransformStripManagedFields()(object)
 }
