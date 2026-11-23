@@ -1,0 +1,96 @@
+# The release (AGENTS.md, "Releases and images"): a signed SemVer tag, cut from
+# main, on a commit where every required check passes, Snyk included. Only
+# this workflow publishes images and releases.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
+
+permissions:
+  contents: read
+
+jobs:
+  tag:
+    name: Verify the tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: The tag is signed, and its commit is on main
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          # The signature is required here; who signed is for the maintainers to verify.
+          git cat-file tag "${TAG}" | grep -q -e "-----BEGIN .* SIGNATURE-----" \
+            || { echo "::error::${TAG} is not a signed tag"; exit 1; }
+          git merge-base --is-ancestor "${TAG}^{commit}" origin/main \
+            || { echo "::error::${TAG} is not on main"; exit 1; }
+
+  checks:
+    needs: tag
+    uses: ./.github/workflows/checks.yaml
+    permissions:
+      contents: read
+
+  snyk:
+    needs: tag
+    uses: ./.github/workflows/snyk.yaml
+    permissions:
+      contents: read
+    secrets:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  publish:
+    name: mise run release:publish
+    needs:
+      - checks
+      - snyk
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      # The GitHub release, the images, and the keyless signatures.
+      contents: write
+      packages: write
+      id-token: write
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        with:
+          version: 2026.11.9
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The checks above scanned the image built from this commit with Trivy.
+      - name: mise run release:publish
+        run: mise run release:publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

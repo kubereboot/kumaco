@@ -1,0 +1,67 @@
+# The Go toolchain: the go directive of go.mod, the Go version of mise.toml and
+# its lockfile move together. The Go version determines the time zone database
+# that kumaco embeds.
+name: "Bump the Go toolchain"
+
+scms:
+  default:
+    kind: github
+    spec:
+      owner: '{{ .scm.owner }}'
+      repository: '{{ .scm.repository }}'
+      branch: '{{ .scm.branch }}'
+      user: '{{ .scm.user }}'
+      email: '{{ .scm.email }}'
+      username: '{{ requiredEnv "GITHUB_ACTOR" }}'
+      token: '{{ requiredEnv "GITHUB_TOKEN" }}'
+
+actions:
+  default:
+    kind: github/pullrequest
+    scmid: default
+    title: 'build: bump Go to {{ source "go" }}'
+    spec:
+      labels:
+        - dependencies
+
+sources:
+  go:
+    name: Get the latest Go release
+    kind: golang
+    spec:
+      versionfilter:
+        kind: semver
+
+targets:
+  go.mod:
+    name: 'Set the go directive to {{ source "go" }}'
+    kind: file
+    scmid: default
+    sourceid: go
+    spec:
+      file: go.mod
+      matchpattern: '(?m)^go \d+\.\d+(\.\d+)?$'
+      replacepattern: 'go {{ source "go" }}'
+  mise.toml:
+    name: 'Set the Go version of mise to {{ source "go" }}'
+    kind: file
+    scmid: default
+    sourceid: go
+    spec:
+      file: mise.toml
+      matchpattern: '(?m)^go = ".*"$'
+      replacepattern: 'go = "{{ source "go" }}"'
+  mise.lock:
+    name: Update the lockfile of mise
+    kind: shell
+    scmid: default
+    disablesourceinput: true
+    dependson:
+      - mise.toml
+    spec:
+      command: sh updatecli/mise-lock.sh
+      changedif:
+        kind: file/checksum
+        spec:
+          files:
+            - mise.lock

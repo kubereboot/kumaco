@@ -172,34 +172,11 @@ and `k8s.io/apiserver/pkg/cel/...`.
 
 #### Approved exceptions
 
-Until the machine-readable allowlist exists, approved exceptions are recorded
-here. Move them into the allowlist when the lint gate lands.
-
-- **`sigs.k8s.io/controller-runtime/pkg/log/zap`**, which links
-  `go.uber.org/zap` and `go.uber.org/zap/zapcore`.
-  - Scope: production (the manager entry point) and tests may import
-    `sigs.k8s.io/controller-runtime/pkg/log/zap`. Direct imports of
-    `go.uber.org/zap` packages stay forbidden.
-  - Reason: it is the logging backend that Kubebuilder scaffolds and
-    controller-runtime documents. A standard-library `log/slog` backend would
-    work, but keeping the default keeps the generated code standard, which makes
-    long-term maintenance and scaffold upgrades simpler.
-  - Approval: approved by maintainer evrardjp on 2026-11-17; the reference is the
-    review of the change that adds this entry. Reviewed 2026-11-17, next review due
-    2027-11-17.
-- **`github.com/google/cel-go`**, packages `cel` and `common/types`, and the
-  Kubernetes packages that wrap it, `k8s.io/apiserver/pkg/cel/...`.
-  - Scope: production and tests, to compile and evaluate the CEL triggers
-    described in `README.md` ("CEL triggers"). Other `cel-go` packages stay
-    forbidden.
-  - Reason: `k8s.io/apiserver/pkg/cel/environment` provides Kubernetes' CEL
-    environment and libraries, so triggers behave like Kubernetes' own CEL
-    features, but declaring the `node` variable and setting the cost limit need
-    `cel-go`'s API (`cel.EnvOption`, program options, result values). The
-    standard library has no CEL implementation.
-  - Approval: approved by maintainer evrardjp on 2026-11-17; the reference is the
-    review of the change that adds this entry. Reviewed 2026-11-17, next review due
-    2027-11-17.
+Approved exceptions are recorded in `hack/lint-deps/exceptions.json`, the
+allowlist that `mise run lint:deps` reads, each with its scope, reason,
+approval, and review dates. At the time of writing: the zap logging backend
+of controller-runtime, `cel-go` with the Kubernetes CEL packages, and the
+Prometheus client for the metrics.
 
 ### Version selection
 
@@ -260,8 +237,10 @@ require clean formatting, `go vet`, unit tests, race tests, dependency-policy li
 cognitive-complexity lint, `lint:contracts`, security/license checks (Snyk is
 CI-only, see "Security and license scanning"), `generate:check`, and
 compatibility/e2e suites.
-Agree on the complexity lint tool and threshold before introducing it; keep its
-configuration identical locally and in CI.
+The complexity gate is `gocognit`, run through golangci-lint, with a threshold of
+15 per function (agreed on 2026-11-17). Changing the tool or the threshold, or
+excluding a function, needs maintainer approval. Keep its configuration identical
+locally and in CI.
 
 Add focused fuzz tests for parsers and scheduling inputs. Benchmarks and scale
 tests are required for performance-sensitive changes.
@@ -351,8 +330,12 @@ and imports introduced by generated code or tooling against the same rules.
   exception is approved.
 - GitHub Actions must invoke these same scan tasks, not provide the only scanning
   implementation. Missing credentials or scan failures must not masquerade as
-  passing required checks. Agree on finding thresholds and documented exceptions
-  before enforcing scan policy.
+  passing required checks.
+- Agreed thresholds (2026-11-17): Trivy fails on HIGH and CRITICAL findings, for
+  vulnerabilities only when a fix exists; Snyk fails from high severity, and on
+  licenses outside its default policy. An accepted finding is a documented
+  exception: it needs maintainer approval, and goes in `.trivyignore.yaml` with a
+  statement and an expiry date.
 
 ### GitHub Actions and maintenance automation
 

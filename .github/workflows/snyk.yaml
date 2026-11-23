@@ -1,0 +1,45 @@
+# Snyk dependency and license scan (AGENTS.md, "Security and license
+# scanning"). It needs an account token, so it only runs in trusted contexts:
+# pushes to main and scheduled runs here, and release tags in the release
+# workflow. It never runs on pull requests, which may come from forks. A
+# failure on main blocks the next release.
+name: Snyk
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_call:
+    secrets:
+      SNYK_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: mise run scan:snyk
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+        with:
+          version: 2026.11.9
+
+      # Without the token, the task fails: it never skips.
+      - name: mise run scan:snyk
+        run: mise run scan:snyk
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}

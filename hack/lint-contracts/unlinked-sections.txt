@@ -1,0 +1,23 @@
+# Sections of README.md that no test links to, and why. `mise run
+# lint:contracts` reads this list (see AGENTS.md, "Tests and required checks").
+#
+# Each line is: <status> #<heading anchor> <reason>
+#   pending      the behaviour of the section is not implemented yet. Remove the
+#                line in the change that adds the first test linking to it.
+#   informative  the section describes no testable behaviour.
+
+informative #kumaco---kubernetes-maintenance-controller Title and table of contents.
+informative #introduction Overview of the project and of the Kured v2 architecture.
+informative #behaviour Heading only: its subsections hold the contracts.
+informative #the-personas Defines the two personas; their access rights are in "Security and access rights".
+pending #condition-types-and-their-owners The e2e suite with Kured and its reporters does not exist: upstream does not publish or consume these condition types yet.
+informative #how-does-it-work Heading only: its subsections hold the contracts.
+informative #handling-maintenancewindow-conflicts Heading only: its subsections hold the contracts.
+pending #how-kured-relies-on-kumaco-and-how-to-configure-your-maintenance-window-for-kured The e2e suite with Kured and its reporters does not exist: Kured has no condition-driven mode yet, and the reporters are not implemented. This is a required merge gate that is NOT met.
+pending #using-kumaco-with-the-node-readiness-controller This integration has no e2e scenario yet.
+pending #using-kumaco-with-node-problem-detector This integration has no e2e scenario yet.
+informative #explanation-of-interconnection-with-kured Rationale: the behaviour it refers to is specified in the other sections.
+informative #compatibility Heading only: its subsections hold the contracts.
+informative #public-contracts Lists the contracts that the other sections define, and the release policy for them.
+informative #getting-help Contact details.
+informative #trademarks Legal notice.

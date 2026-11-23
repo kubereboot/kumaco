@@ -1,0 +1,13 @@
+# golangci-lint only runs the cognitive-complexity gate (AGENTS.md, "Tests and
+# required checks"): `mise run lint:complexity`, locally and in CI. The tool and
+# the threshold were agreed with the maintainers; do not change them, or exclude
+# a function, without their approval. Formatting, go vet and logcheck are run
+# by `mise run lint`.
+version: "2"
+linters:
+  default: none
+  enable:
+    - gocognit
+  settings:
+    gocognit:
+      min-complexity: 15

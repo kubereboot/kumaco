@@ -1,0 +1,37 @@
+# Chat-ops commands on issues and pull requests, with
+# cncf/prow-github-actions (AGENTS.md, "GitHub Actions and maintenance
+# automation"). Only the commands below are enabled. Nothing here merges: a
+# label such as lgtm or approved is information for the maintainers, and the
+# required checks and reviews of the repository still apply. Automatic merging
+# needs maintainer approval before it is added.
+name: Prow
+
+on:
+  issue_comment:
+    types:
+      - created
+
+permissions:
+  contents: read
+
+jobs:
+  commands:
+    name: Commands
+    # Only comments that are commands.
+    if: startsWith(github.event.comment.body, '/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
+        with:
+          egress-policy: audit
+
+      - uses: cncf/prow-github-actions@a192ee15687d4ede4d553ff0929b2b296666afd7 # v3.5.0
+        with:
+          prow-commands: /assign /unassign /cc /uncc /lgtm /approve /hold /close /reopen /retitle /kind /area /priority /label /remove /lifecycle /help /good-first-issue
+          github-token: ${{ secrets.GITHUB_TOKEN }}

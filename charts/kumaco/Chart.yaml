@@ -1,0 +1,12 @@
+apiVersion: v2
+name: kumaco
+description: kumaco, the Kubernetes maintenance controller
+type: application
+home: https://github.com/kubereboot/kumaco
+sources:
+  - https://github.com/kubereboot/kumaco
+# The release sets both versions: the chart is published with the release it
+# deploys, and appVersion is the tag of its image.
+version: 0.0.0
+appVersion: dev
+kubeVersion: ">=1.37.0-0"

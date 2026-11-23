@@ -1,1 +1,8 @@
 # Project's gitignore
+
+# Sentinels and kubeconfigs of the kind clusters created by e2e runs
+/test/e2e/.clusters/
+# Build outputs: the binaries and the image archive of `mise run image`, and
+# the artifacts of release previews
+/.tmp/
+/dist/
